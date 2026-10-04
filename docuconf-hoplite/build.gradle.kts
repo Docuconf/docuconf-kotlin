@@ -33,6 +33,9 @@ dependencies {
 tasks.test {
     useJUnitPlatform()
     systemProperty("docuconf.projectDir", projectDir.absolutePath)
+    systemProperty("docuconf.version", providers.gradleProperty("VERSION_NAME").get())
+    // CI sets DOCUCONF_REQUIRE_CUE=1 so a missing cue binary fails the build instead of skipping.
+    System.getenv("DOCUCONF_REQUIRE_CUE")?.let { environment("DOCUCONF_REQUIRE_CUE", it) }
     // Lets CI point the CUE vet test at a checkout of docuconf/docuconf-go.
     environment("DOCUCONF_SPEC_DIR", System.getenv("DOCUCONF_SPEC_DIR") ?: rootProject.file("../docuconf-go/spec/cue").absolutePath)
 }
