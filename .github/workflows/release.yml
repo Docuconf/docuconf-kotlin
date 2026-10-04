@@ -1,0 +1,57 @@
+name: release
+
+# Push a tag such as v0.1.0 (matching VERSION_NAME in gradle.properties) to publish
+# dev.docuconf:docuconf-kotlin-core and dev.docuconf:docuconf-hoplite to Maven Central
+# through the Central Portal. Maven Central has no OIDC trusted publishing, so this uses
+# a Central Portal user token and a GPG signing key stored as secrets (see RELEASING.md).
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment: maven-central
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: docuconf/docuconf-go
+          path: docuconf-go
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+          cache: false
+      - run: go install cuelang.org/go/cmd/cue@v0.17.1
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Check the tag matches gradle.properties
+        run: |
+          version=$(sed -n 's/^VERSION_NAME=//p' gradle.properties)
+          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "Tag $GITHUB_REF_NAME does not match VERSION_NAME $version" >&2
+            exit 1
+          fi
+
+      - run: ./gradlew check
+        env:
+          DOCUCONF_SPEC_DIR: ${{ github.workspace }}/docuconf-go/spec/cue
+          DOCUCONF_REQUIRE_CUE: "1"
+
+      # Uploads a signed deployment to the Central Portal. It is released from
+      # https://central.sonatype.com/publishing/deployments after a look; switch to
+      # publishAndReleaseToMavenCentral to release automatically.
+      - run: ./gradlew publishToMavenCentral --no-configuration-cache
+        env:
+          ORG_GRADLE_PROJECT_mavenCentralUsername: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
+          ORG_GRADLE_PROJECT_mavenCentralPassword: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
+          ORG_GRADLE_PROJECT_signingInMemoryKey: ${{ secrets.SIGNING_KEY }}
+          ORG_GRADLE_PROJECT_signingInMemoryKeyId: ${{ secrets.SIGNING_KEY_ID }}
+          ORG_GRADLE_PROJECT_signingInMemoryKeyPassword: ${{ secrets.SIGNING_KEY_PASSWORD }}
