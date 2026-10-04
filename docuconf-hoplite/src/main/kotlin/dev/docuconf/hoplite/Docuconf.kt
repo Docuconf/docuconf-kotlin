@@ -140,8 +140,8 @@ public object Docuconf {
         for (v in vars) {
             val raw = env[v.spec.name]
             if (ValueChecks.isUnset(v.spec, raw)) {
+                // Hoplite would fail to parse "" for a non-string type; unset lets the default apply.
                 filteredEnv.remove(v.spec.name)
-                // A default from a base file satisfies a variable Hoplite would otherwise miss.
             } else {
                 v.spec.deprecated?.let { d -> warnings += "${v.spec.name} is deprecated: ${d.message}" + (d.replacedBy?.let { r -> " Use $r." } ?: "") }
             }
@@ -161,7 +161,6 @@ public object Docuconf {
             files.load(f)
         }
         violations += files.violations
-        // A keystore password is only checked through its keystore.
         if (violations.isNotEmpty()) return LoadResult.Failure(violations, warnings).also { warnings.forEach(options.warn) }
 
         val markers = decl.files.filter { it.spec.name in files.loaded }.associate { it.path.joinToString(".") to FILE_MARKER + it.spec.name }
