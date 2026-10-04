@@ -1,4 +1,4 @@
-package dev.docuconf.core
+package dev.docuconf.kotlin.core
 
 /**
  * Writes a [Contract] as `contract.cue` (SPEC §4): plain data unified with `contract.#Contract`.

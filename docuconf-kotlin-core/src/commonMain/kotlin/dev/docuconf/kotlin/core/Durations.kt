@@ -1,4 +1,4 @@
-package dev.docuconf.core
+package dev.docuconf.kotlin.core
 
 /**
  * Durations as nanoseconds, in the forms SPEC §5 names. Contracts always hold the Go form;

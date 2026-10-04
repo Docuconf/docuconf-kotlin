@@ -1,4 +1,4 @@
-package dev.docuconf.core
+package dev.docuconf.kotlin.core
 
 import kotlin.test.Test
 import kotlin.test.assertEquals

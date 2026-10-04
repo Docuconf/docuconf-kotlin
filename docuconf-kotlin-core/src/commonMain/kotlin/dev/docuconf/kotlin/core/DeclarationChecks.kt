@@ -1,4 +1,4 @@
-package dev.docuconf.core
+package dev.docuconf.kotlin.core
 
 /** A declaration that cannot produce a valid contract. Raised at definition time (SPEC §11.2 item 2). */
 public class DeclarationException(public val problems: List<String>) :
@@ -130,7 +130,9 @@ public object DeclarationChecks {
             VarType.JSON -> v to d.toString()
         }
         if (v.type != VarType.STRING && raw.isEmpty()) return "cannot be empty"
-        val problems = ValueChecks.check(spec.copy(required = false), raw)
+        // A non-RE2 pattern is reported on its own; check the rest of the default without it.
+        val checkable = if (spec.pattern != null && Re2.unsupportedFeature(spec.pattern) != null) spec.copy(pattern = null) else spec
+        val problems = ValueChecks.check(checkable.copy(required = false), raw)
         return if (problems.isEmpty()) null else "violates its own constraints: " + problems.joinToString("; ") { it.message }
     }
 }

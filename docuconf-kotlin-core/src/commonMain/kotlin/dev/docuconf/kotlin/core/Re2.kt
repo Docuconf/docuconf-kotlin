@@ -1,4 +1,4 @@
-package dev.docuconf.core
+package dev.docuconf.kotlin.core
 
 /**
  * RE2 is the pattern dialect of the contract (SPEC §4.3): CUE, Go and the platform match with it.

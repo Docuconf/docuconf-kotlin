@@ -1,4 +1,4 @@
-package dev.docuconf.core
+package dev.docuconf.kotlin.core
 
 /**
  * java.util.regex differs from RE2 in three ways that matter for contracts:

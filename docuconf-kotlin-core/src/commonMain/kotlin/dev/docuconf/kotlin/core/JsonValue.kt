@@ -1,4 +1,4 @@
-package dev.docuconf.core
+package dev.docuconf.kotlin.core
 
 /**
  * A JSON value. Used for defaults, JSON Schemas and `json` variables, so the core needs no

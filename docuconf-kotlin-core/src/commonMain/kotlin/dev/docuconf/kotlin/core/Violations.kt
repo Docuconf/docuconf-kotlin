@@ -1,4 +1,4 @@
-package dev.docuconf.core
+package dev.docuconf.kotlin.core
 
 /** The stable error codes of SPEC §11.2 item 5. */
 public object Codes {

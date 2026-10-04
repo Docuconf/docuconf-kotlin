@@ -1,4 +1,4 @@
-package dev.docuconf.core
+package dev.docuconf.kotlin.core
 
 /**
  * Checks one variable's raw environment string against its declaration (SPEC §5 parsing rules and

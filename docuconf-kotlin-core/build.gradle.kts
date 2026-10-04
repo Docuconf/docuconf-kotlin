@@ -22,10 +22,12 @@ kotlin {
 
 mavenPublishing {
     publishToMavenCentral()
-    signAllPublications()
-    coordinates(artifactId = "docuconf-core")
+    // Release builds sign with the in-memory key from ORG_GRADLE_PROJECT_signingInMemoryKey (see RELEASING.md).
+    // Local builds (publishToMavenLocal) skip signing.
+    if (providers.gradleProperty("signingInMemoryKey").isPresent) signAllPublications()
+    coordinates(artifactId = "docuconf-kotlin-core")
     pom {
-        name.set("docuconf core")
+        name.set("docuconf Kotlin core")
         description.set("docuconf declaration model, CUE contract writer and value checks (Kotlin Multiplatform).")
         // Licence pending: see README.
     }

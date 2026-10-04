@@ -1,4 +1,4 @@
-package dev.docuconf.core
+package dev.docuconf.kotlin.core
 
 /** Contract variable types (SPEC §4.3). [wire] is the name used in the contract. */
 public enum class VarType(public val wire: String) {

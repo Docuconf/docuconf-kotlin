@@ -1,4 +1,4 @@
-package dev.docuconf.core
+package dev.docuconf.kotlin.core
 
 /** Generates Markdown documentation of a contract's inputs (SPEC §11.2, "SHOULD"). */
 public object MarkdownWriter {

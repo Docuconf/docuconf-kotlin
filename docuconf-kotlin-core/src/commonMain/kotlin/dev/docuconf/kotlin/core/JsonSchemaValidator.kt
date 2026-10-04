@@ -1,4 +1,4 @@
-package dev.docuconf.core
+package dev.docuconf.kotlin.core
 
 /**
  * Validates a value against the JSON Schema subset docuconf generates from an app's types:
