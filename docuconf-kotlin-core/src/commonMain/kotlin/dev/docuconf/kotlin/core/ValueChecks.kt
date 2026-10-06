@@ -136,9 +136,14 @@ public object ValueChecks {
         }
 
         fun checkInt(): Long? {
-            val n = if (intSyntax.matches(raw)) raw.toLongOrNull() else null
+            if (!intSyntax.matches(raw)) {
+                add(Codes.INVALID_TYPE, "$shown is not an integer")
+                return null
+            }
+            val n = raw.toLongOrNull()
             if (n == null) {
-                add(Codes.INVALID_TYPE, "$shown is not a 64-bit integer")
+                // An integer, just not one a 64-bit int holds (SPEC §5).
+                add(Codes.OUT_OF_RANGE, "$shown is outside the 64-bit integer range")
                 return null
             }
             bounds(JsonValue.Int(n), n.toDouble())
@@ -217,8 +222,11 @@ public object ValueChecks {
         fun checkItems(items: List<String>): List<Any>? {
             val parsed: List<Any?> = if (spec.items == ListItems.INT) {
                 items.mapIndexed { i, item ->
-                    (if (intSyntax.matches(item)) item.toLongOrNull() else null)
-                        ?: null.also { add(Codes.INVALID_TYPE, "${itemLabel(i, item)} is not an integer") }
+                    when {
+                        !intSyntax.matches(item) -> null.also { add(Codes.INVALID_TYPE, "${itemLabel(i, item)} is not an integer") }
+                        item.toLongOrNull() == null -> null.also { add(Codes.OUT_OF_RANGE, "${itemLabel(i, item)} is outside the 64-bit integer range") }
+                        else -> item.toLong()
+                    }
                 }
             } else {
                 items
@@ -226,7 +234,7 @@ public object ValueChecks {
             return finishList(parsed)
         }
 
-        /** A JSON array of items. */
+        /** A JSON array: items must be JSON strings or JSON integers, as `items` says. */
         fun checkJsonList(): List<Any>? {
             val parsed = try {
                 JsonValue.parse(raw)
@@ -238,7 +246,19 @@ public object ValueChecks {
                 add(Codes.INVALID_TYPE, "is not a JSON array")
                 return null
             }
-            return checkItems(parsed.items.map { if (it is JsonValue.Str) it.value else it.toString() })
+            val items = parsed.items.mapIndexed { i, x ->
+                val label = if (spec.secret) "item $i" else "item $i $x"
+                when {
+                    spec.items == ListItems.INT && x is JsonValue.Int -> x.value
+                    // The JSON reader holds integers beyond 64 bits as floats.
+                    spec.items == ListItems.INT && x is JsonValue.Float && x.value % 1.0 == 0.0 && (x.value >= 9.223372036854775807E18 || x.value < -9.223372036854775808E18) ->
+                        null.also { add(Codes.OUT_OF_RANGE, "$label is outside the 64-bit integer range") }
+                    spec.items == ListItems.INT -> null.also { add(Codes.INVALID_TYPE, "$label is not a JSON integer") }
+                    x is JsonValue.Str -> x.value
+                    else -> null.also { add(Codes.INVALID_TYPE, "$label is not a JSON string") }
+                }
+            }
+            return finishList(items)
         }
 
         fun finishList(items: List<Any?>): List<Any>? {

@@ -73,6 +73,18 @@ class OverlayTest {
     }
 
     @Test
+    fun overlayIntListItemsAreCheckedAgainstTheirBounds(@TempDir root: Path) {
+        val w = World(root)
+        // Hoplite's YAML parser reads list items as strings; they are still int items.
+        w.write(overlay, "adminPorts: [9100, 9101]\n")
+        assertEquals(listOf(9100, 9101), w.load().adminPorts)
+        w.write(overlay, "adminPorts: [9100, 0]\n")
+        assertEquals(listOf("ADMINPORTS" to Codes.OUT_OF_RANGE), w.failure().violations.map { it.input to it.code })
+        w.write(overlay, "adminPorts: [9100, x]\n")
+        assertEquals(listOf("ADMINPORTS" to Codes.INVALID_TYPE), w.failure().violations.map { it.input to it.code })
+    }
+
+    @Test
     fun overlayValuesBindInNativeTypes(@TempDir root: Path) {
         val w = World(root)
         w.write(

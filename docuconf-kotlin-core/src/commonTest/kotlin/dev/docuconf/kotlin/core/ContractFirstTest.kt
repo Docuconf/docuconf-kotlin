@@ -74,14 +74,14 @@ class ContractFirstTest {
         val r = ContractFirst.check(
             contract,
             mapOf(
-                "RATIO" to "1,5", "SHARDS__0" to "1024", 
+                "PORT" to "99999999999999999999", "RATIO" to "1,5", "SHARDS__0" to "1024", "IDS" to "[\"1\"]",
                 "TOKEN" to "short-tok", "LIMITS" to "{}", "SECS" to "90s",
             ),
         )
         assertIs<ContractFirst.Result.Failure>(r)
         assertEquals(
             setOf(
-                "RATIO:invalid_type", "SHARDS:out_of_range",
+                "PORT:out_of_range", "RATIO:invalid_type", "SHARDS:out_of_range", "IDS:invalid_type",
                 "TOKEN:out_of_range", "LIMITS:schema_mismatch", "SECS:invalid_type",
             ),
             r.violations.map { "${it.input}:${it.code}" }.toSet(),

@@ -148,6 +148,13 @@ class LoadTest {
     }
 
     @Test
+    fun intBeyond64BitsIsOutOfRange(@TempDir root: Path) {
+        val w = World(root)
+        w.env["DB_POOLSIZE"] = "99999999999999999999"
+        assertEquals(listOf("DB_POOLSIZE:out_of_range"), w.violations().map { "${it.input}:${it.code}" })
+    }
+
+    @Test
     fun emptyStringIsUnsetForNonStrings(@TempDir root: Path) {
         val w = World(root)
         w.env += mapOf("PORT" to "", "TIMEOUT" to "", "COMPRESS" to "", "LEGACYPORT" to "")
