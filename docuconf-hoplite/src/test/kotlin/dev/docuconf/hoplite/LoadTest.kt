@@ -141,6 +141,13 @@ class LoadTest {
     }
 
     @Test
+    fun listItemOutOfBounds(@TempDir root: Path) {
+        val w = World(root)
+        w.env["ADMINPORTS"] = "9100,0,70000"
+        assertEquals(listOf("ADMINPORTS:out_of_range", "ADMINPORTS:out_of_range"), w.violations().map { "${it.input}:${it.code}" })
+    }
+
+    @Test
     fun emptyStringIsUnsetForNonStrings(@TempDir root: Path) {
         val w = World(root)
         w.env += mapOf("PORT" to "", "TIMEOUT" to "", "COMPRESS" to "", "LEGACYPORT" to "")

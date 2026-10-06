@@ -206,7 +206,7 @@ Two properties that map to the same name are a declaration error.
 | `java.time.Duration`, `kotlin.time.Duration` | `duration`, `encoding: "iso8601"` | `PT1M30S` |
 | `java.net.URI`, `java.net.URL`, `String` + `@Url`/`@Schemes` | `url` | as is |
 | `enum class`, `String` + `@OneOf` | `enum` | the constant name |
-| `List<String>`, `List<Int>`, `List<Long>`, `Set<…>` | `list`, `encoding: "csv"` | `a,b` |
+| `List<String>`, `List<Int>`, `List<Long>`, `Set<…>` | `list`, `encoding: "csv"` (`List<Int>` exports Int's range as `itemMin`/`itemMax`) | `a,b` |
 | `Json<T>` | `json`, `schema` generated from `T` | compact JSON |
 | a data class | nested variables | |
 
@@ -235,6 +235,7 @@ All go on primary-constructor parameters.
 | `@Url`, `@Schemes("postgres", ...)` | URL variable, allowed schemes. |
 | `@OneOf("a", "b")` | A `String` restricted to values (an `enum class` needs nothing). |
 | `@Items(min, max)` | List length. |
+| `@ItemMin(n)`, `@ItemMax(n)` | Bounds on every item of a `List<Int>` or `List<Long>` (`itemMin`/`itemMax`). An item outside them is `out_of_range` at boot. A `List<Int>` gets Int's range without them, and a declared bound wider than Int is narrowed to it, so the platform never sends an item the app cannot hold. |
 | `@Group`, `@Examples`, `@DeprecatedInput(message, replacedBy)` | Docs metadata. Deprecated inputs log a warning at boot when set. |
 | `@NotInContract` | Leave a parameter out, e.g. a value Hoplite reads from Vault or AWS Secrets Manager (SPEC §4.4). |
 | `@FileInput(name, path, pathEnv, maxSize, secret)` | Declares a file input on a file-typed parameter. |

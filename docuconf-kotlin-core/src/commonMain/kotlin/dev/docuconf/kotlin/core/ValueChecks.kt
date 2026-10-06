@@ -185,9 +185,15 @@ public object ValueChecks {
             }
             if (spec.items == ListItems.INT) {
                 items.forEachIndexed { i, item ->
-                    if (!intSyntax.matches(item) || item.toLongOrNull() == null) {
+                    val n = if (intSyntax.matches(item)) item.toLongOrNull() else null
+                    if (n == null) {
                         add(Codes.INVALID_TYPE, if (spec.secret) "item $i is not an integer" else "item $i ${quote(item)} is not an integer")
+                        return@forEachIndexed
                     }
+                    // itemMin/itemMax (SPEC §4.3); an item outside them is out_of_range (§11.2 item 5).
+                    val label = if (spec.secret) "item $i" else "item $i ($n)"
+                    spec.itemMin?.let { if (n < it) add(Codes.OUT_OF_RANGE, "$label is below itemMin $it") }
+                    spec.itemMax?.let { if (n > it) add(Codes.OUT_OF_RANGE, "$label is above itemMax $it") }
                 }
             }
             spec.minItems?.let { if (items.size < it) add(Codes.TOO_FEW_ITEMS, "has ${items.size} items, fewer than minItems $it") }

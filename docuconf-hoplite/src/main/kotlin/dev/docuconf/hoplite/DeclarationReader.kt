@@ -173,8 +173,9 @@ internal object DeclarationReader {
             }
             var listItems: ListItems? = null
             var schema: JsonValue? = null
+            val itemClass = p.type.arguments.firstOrNull()?.type?.classifier
             if (type == VarType.LIST) {
-                listItems = when (p.type.arguments.firstOrNull()?.type?.classifier) {
+                listItems = when (itemClass) {
                     String::class -> ListItems.STRING
                     Int::class, Long::class -> ListItems.INT
                     else -> {
@@ -194,15 +195,24 @@ internal object DeclarationReader {
                 else -> null to null
             }
             val min: JsonValue? = when (type) {
-                VarType.INT -> (a.filterIsInstance<Min>().firstOrNull()?.value ?: implicitMin)?.let { JsonValue.Int(it) }
+                // A declared bound wider than the type holds is narrowed to the type's range.
+                VarType.INT -> (a.filterIsInstance<Min>().firstOrNull()?.value?.let { m -> implicitMin?.let { maxOf(m, it) } ?: m } ?: implicitMin)?.let { JsonValue.Int(it) }
                 VarType.FLOAT -> a.filterIsInstance<DecimalMin>().firstOrNull()?.let { JsonValue.Float(it.value) }
                 else -> null
             }
             val max: JsonValue? = when (type) {
-                VarType.INT -> (a.filterIsInstance<Max>().firstOrNull()?.value ?: implicitMax)?.let { JsonValue.Int(it) }
+                VarType.INT -> (a.filterIsInstance<Max>().firstOrNull()?.value?.let { m -> implicitMax?.let { minOf(m, it) } ?: m } ?: implicitMax)?.let { JsonValue.Int(it) }
                 VarType.FLOAT -> a.filterIsInstance<DecimalMax>().firstOrNull()?.let { JsonValue.Float(it.value) }
                 else -> null
             }
+            // Item bounds: the declared ones, else the item type's own range when it is narrower than
+            // 64 bits, so the platform never sends an item the app cannot hold (SPEC §5).
+            val itemMin = a.filterIsInstance<ItemMin>().firstOrNull()?.value
+            val itemMax = a.filterIsInstance<ItemMax>().firstOrNull()?.value
+            if ((itemMin != null || itemMax != null) && listItems != ListItems.INT) {
+                errors += "${where(path)}: @ItemMin and @ItemMax only apply to List<Int> or List<Long>"
+            }
+            val intItems = type == VarType.LIST && itemClass == Int::class
             val rawDefault = defaults[p.name]
             val default = if (p.isOptional && rawDefault != null) {
                 try {
@@ -250,6 +260,8 @@ internal object DeclarationReader {
                     listEncoding = ListEncoding.CSV,
                     minItems = items?.min?.takeIf { it >= 0 },
                     maxItems = items?.max?.takeIf { it >= 0 },
+                    itemMin = if (intItems) maxOf(itemMin ?: Long.MIN_VALUE, Int.MIN_VALUE.toLong()) else itemMin,
+                    itemMax = if (intItems) minOf(itemMax ?: Long.MAX_VALUE, Int.MAX_VALUE.toLong()) else itemMax,
                     schema = schema,
                 ),
                 path,

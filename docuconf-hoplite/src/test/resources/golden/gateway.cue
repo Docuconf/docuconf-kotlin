@@ -18,6 +18,8 @@ contract.#Contract & {
 			items: "int"
 			encoding: "csv"
 			maxItems: 4
+			itemMin: 1
+			itemMax: 65535
 			default: []
 		}
 		BROKERS: {

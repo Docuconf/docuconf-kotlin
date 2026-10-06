@@ -106,6 +106,9 @@ public data class VarSpec(
     val separator: String = ",",
     val minItems: Int? = null,
     val maxItems: Int? = null,
+    // int list item bounds
+    val itemMin: Long? = null,
+    val itemMax: Long? = null,
     // json
     val schema: JsonValue? = null,
 )
