@@ -2,21 +2,15 @@ package dev.docuconf.hoplite
 
 import com.sksamuel.hoplite.Secret
 import dev.docuconf.kotlin.core.DeclarationException
-import org.junit.jupiter.api.Assumptions.assumeTrue
 import org.junit.jupiter.api.io.TempDir
 import java.nio.file.Files
 import java.nio.file.Path
-import java.util.concurrent.TimeUnit
-import kotlin.io.path.copyToRecursively
-import kotlin.io.path.createDirectories
-import kotlin.io.path.exists
 import kotlin.test.Test
 import kotlin.test.assertContains
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 
-@OptIn(kotlin.io.path.ExperimentalPathApi::class)
 class ExportTest {
     private val projectDir = Path.of(System.getProperty("docuconf.projectDir") ?: ".")
     private val golden = projectDir.resolve("src/test/resources/golden/gateway.cue")
@@ -62,22 +56,9 @@ class ExportTest {
 
     @Test
     fun passesCueVet(@TempDir dir: Path) {
-        val cue = findCue()
-        val spec = System.getenv("DOCUCONF_SPEC_DIR")?.let { Path.of(it) }
-        val available = cue != null && spec != null && spec.resolve("contract/contract.cue").exists()
-        if (System.getenv("DOCUCONF_REQUIRE_CUE") == "1") {
-            assertTrue(available, "DOCUCONF_REQUIRE_CUE=1 but cue ($cue) or the meta-schema in DOCUCONF_SPEC_DIR ($spec) is missing")
-        }
-        assumeTrue(cue != null, "cue is not installed; skipping cue vet")
-        assumeTrue(available, "DOCUCONF_SPEC_DIR does not hold the meta-schema; skipping cue vet")
-        spec!!.resolve("cue.mod").copyToRecursively(dir.resolve("cue.mod"), followLinks = false, overwrite = true)
-        spec.resolve("contract").copyToRecursively(dir.resolve("contract"), followLinks = false, overwrite = true)
-        dir.resolve("svc").createDirectories()
-        Files.writeString(dir.resolve("svc/contract.cue"), export())
-        val p = ProcessBuilder(cue, "vet", "-c", "./svc").directory(dir.toFile()).redirectErrorStream(true).start()
-        val out = p.inputStream.bufferedReader().readText()
-        assertTrue(p.waitFor(120, TimeUnit.SECONDS))
-        assertEquals(0, p.exitValue(), "cue vet -c failed:\n$out")
+        val cue = Cue.module(dir, export())
+        val (exit, out) = Cue.run(cue, dir, "vet", "-c", "./svc")
+        assertEquals(0, exit, "cue vet -c failed:\n$out")
     }
 
     @Test
@@ -147,12 +128,6 @@ class ExportTest {
         main(arrayOf("--class", GatewayConfig::class.java.name, "--service", "gateway", "--out", out.toString(), "--markdown", md.toString()))
         assertEquals(Files.readString(golden), Files.readString(out))
         assertContains(Files.readString(md), "# gateway configuration")
-    }
-
-    private fun findCue(): String? {
-        val home = System.getProperty("user.home")
-        val candidates = listOf("$home/go/bin/cue") + (System.getenv("PATH") ?: "").split(':').map { "$it/cue" }
-        return candidates.firstOrNull { Files.isExecutable(Path.of(it)) }
     }
 }
 

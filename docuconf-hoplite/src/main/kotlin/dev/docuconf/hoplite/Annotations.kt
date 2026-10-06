@@ -3,10 +3,12 @@ package dev.docuconf.hoplite
 import dev.docuconf.kotlin.core.ConfigFormat
 import dev.docuconf.kotlin.core.KeyAlgorithm
 import dev.docuconf.kotlin.core.KeystoreFormat
+import dev.docuconf.kotlin.core.Reload
 
 // docuconf metadata for Hoplite config classes. Hoplite binds the data class; these annotations add
 // what it cannot express: descriptions (KDoc is not available at runtime), constraints, URL schemes
-// and file inputs. All of them go on primary-constructor parameters.
+// and file inputs. All of them go on primary-constructor parameters, except [ConfigOverlay], which
+// goes on the root config class.
 
 /** The description of a variable or file input. Required for every input; at least 5 characters. */
 @Target(AnnotationTarget.VALUE_PARAMETER)
@@ -154,3 +156,33 @@ public annotation class MinCertificates(val value: Int)
 @Target(AnnotationTarget.VALUE_PARAMETER)
 @Retention(AnnotationRetention.RUNTIME)
 public annotation class KeystoreSpec(val format: KeystoreFormat = KeystoreFormat.PKCS12, val passwordVar: String = "")
+
+/**
+ * Declares a config-file overlay (SPEC §4.7): a file the platform mounts, which Hoplite layers
+ * between the config files baked into the image ([DocuconfOptions.baseSources]) and environment
+ * variables. Goes on the root config class; repeatable.
+ *
+ * The format follows the extension of [path] (`.json`, `.yaml`, `.yml`, `.toml`; the Hoplite parser
+ * module must be on the classpath). Keys nest as Hoplite reads config files, so the overlay's key
+ * separator is `.` and a variable's `configKey` is its property path (`db.poolSize`). The file is
+ * optional: a missing overlay is fine.
+ *
+ * Its directory is mounted by the platform, hiding what the image has there, so [path] must be in a
+ * directory of its own (`/app/config`), not one holding the app or its config files.
+ *
+ * @property name the overlay name in the contract, a DNS label such as `platform`.
+ * @property path where the app reads the overlay. Absolute.
+ * @property description what the overlay is for (optional, at least 5 characters).
+ * @property reload only [Reload.RESTART]: a change rolls the pods. [Reload.WATCH] is rejected,
+ *   because docuconf validates configuration once, at boot.
+ */
+@Target(AnnotationTarget.CLASS)
+@Retention(AnnotationRetention.RUNTIME)
+@Repeatable
+@MustBeDocumented
+public annotation class ConfigOverlay(
+    val name: String,
+    val path: String,
+    val description: String = "",
+    val reload: Reload = Reload.RESTART,
+)

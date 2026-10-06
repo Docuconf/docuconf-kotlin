@@ -12,6 +12,8 @@ import dev.docuconf.kotlin.core.JsonValue
 import dev.docuconf.kotlin.core.KeystoreFormat
 import dev.docuconf.kotlin.core.ListEncoding
 import dev.docuconf.kotlin.core.ListItems
+import dev.docuconf.kotlin.core.OverlaySpec
+import dev.docuconf.kotlin.core.Reload
 import dev.docuconf.kotlin.core.VarSpec
 import dev.docuconf.kotlin.core.VarType
 import java.net.URI
@@ -21,6 +23,7 @@ import java.security.PrivateKey
 import kotlin.reflect.KClass
 import kotlin.reflect.KParameter
 import kotlin.reflect.KType
+import kotlin.reflect.full.findAnnotations
 import kotlin.reflect.full.memberProperties
 import kotlin.reflect.full.primaryConstructor
 import kotlin.reflect.jvm.isAccessible
@@ -36,6 +39,7 @@ internal data class Declaration(
     val root: KClass<*>,
     val vars: List<VarBinding>,
     val files: List<FileBinding>,
+    val overlays: List<OverlaySpec>,
     val warnings: List<String>,
 )
 
@@ -53,9 +57,13 @@ internal object DeclarationReader {
     fun read(root: KClass<*>, prefix: String = ""): Declaration {
         val r = Reader(root, prefix)
         r.walk(root, emptyList(), parentOptional = false, inheritedGroup = null)
+        val overlays = root.findAnnotations(ConfigOverlay::class).map { r.overlay(it) }
         if (r.errors.isNotEmpty()) throw DeclarationException(r.errors)
-        return Declaration(root, r.vars, r.files, r.warnings)
+        return Declaration(root, r.vars, r.files, overlays, r.warnings)
     }
+
+    /** Hoplite nests config file keys as maps; the contract writes them joined with this separator. */
+    const val KEY_SEPARATOR = "."
 
     /** The env segment Hoplite matches a property name against. */
     fun envSegment(name: String): String = name.replace("_", "").replace("-", "").uppercase()
@@ -97,6 +105,34 @@ internal object DeclarationReader {
                     else -> errors += "${where(here)}: type ${kc.qualifiedName} is not supported by docuconf; annotate it @NotInContract"
                 }
             }
+        }
+
+        fun overlay(a: ConfigOverlay): OverlaySpec {
+            val p = "${root.simpleName}: @ConfigOverlay(name = \"${a.name}\")"
+            val format = when (a.path.substringAfterLast('/').substringAfterLast('.', "").lowercase()) {
+                "json" -> ConfigFormat.JSON
+                "yaml", "yml" -> ConfigFormat.YAML
+                "toml" -> ConfigFormat.TOML
+                else -> {
+                    errors += "$p: cannot tell the format of ${a.path}; overlays must end in .json, .yaml, .yml or .toml"
+                    ConfigFormat.YAML
+                }
+            }
+            if (a.reload == Reload.WATCH) {
+                // hoplite-watch's ReloadableConfig re-runs Hoplite alone, so a reload would bypass
+                // docuconf's checks and file inputs. Rather than export a promise it does not keep
+                // (SPEC §11.2 item 8), docuconf rejects watch.
+                errors += "$p: reload = WATCH is not supported; docuconf for Hoplite validates configuration once, at boot. " +
+                    "Use Reload.RESTART: the platform renders an immutable ConfigMap and rolls the pods on change."
+            }
+            return OverlaySpec(
+                name = a.name,
+                format = format,
+                path = a.path,
+                keySeparator = KEY_SEPARATOR,
+                description = a.description.ifEmpty { null },
+                reload = a.reload,
+            )
         }
 
         fun envName(path: List<String>) = prefix + path.joinToString("_") { envSegment(it) }
@@ -182,7 +218,8 @@ internal object DeclarationReader {
                 errors += "${where(path)}: negative durations cannot be exported"
             }
             val deprecated = a.filterIsInstance<DeprecatedInput>().firstOrNull()?.let { Deprecation(it.message, it.replacedBy.ifEmpty { null }) }
-            val configKey = path.joinToString(".").takeIf { key -> key.any { it.isUpperCase() || it == '_' || it == '-' } }
+            // Where Hoplite reads the value in a config file, such as a platform overlay (SPEC §4.7).
+            val configKey = path.joinToString(KEY_SEPARATOR)
             if (type == VarType.ENUM && values == null) type = VarType.STRING
             vars += VarBinding(
                 VarSpec(
