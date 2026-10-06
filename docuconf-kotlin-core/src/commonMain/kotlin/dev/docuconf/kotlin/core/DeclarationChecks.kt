@@ -68,9 +68,7 @@ public object DeclarationChecks {
             if (!names.add(f.name)) errors += "$p declared more than once"
             if (!inputName.matches(f.name)) errors += "$p file input names must be DNS labels starting with a letter (^[a-z]([-a-z0-9]{0,40}[a-z0-9])?$)"
             checkDescription(p, f.description, errors)
-            if (!absPath.matches(f.path) || f.path.contains("//") || f.path.endsWith("/") ||
-                f.path.split('/').any { it == "." || it == ".." }
-            ) {
+            if (!isNormalisedAbsolute(f.path)) {
                 errors += "$p path \"${f.path}\" must be absolute and normalised"
             } else {
                 val dir = if (f.type == FileType.TLS) f.path else f.path.substringBeforeLast('/').ifEmpty { "/" }
@@ -93,8 +91,39 @@ public object DeclarationChecks {
                 if (v == null || !v.secret) errors += "$p passwordVar $pv must name a declared secret variable"
             }
         }
+        val overlayNames = HashSet<String>()
+        for (o in contract.overlays) {
+            val p = "overlay ${o.name}:"
+            if (!overlayNames.add(o.name)) errors += "$p declared more than once"
+            if (!inputName.matches(o.name)) errors += "$p overlay names must be DNS labels starting with a letter (^[a-z]([-a-z0-9]{0,40}[a-z0-9])?$)"
+            o.description?.let { checkDescription(p, it, errors) }
+            if (o.keySeparator != ":" && o.keySeparator != ".") errors += "$p keySeparator must be \":\" or \".\""
+            if (!isNormalisedAbsolute(o.path)) {
+                errors += "$p path \"${o.path}\" must be absolute and normalised"
+            } else {
+                val dir = o.mountDir
+                if (dir in reservedDirs) errors += "$p mounting at $dir would hide a directory the image needs; choose a dedicated directory such as /app/config"
+                mounts.put(dir, "overlay ${o.name}")?.let { other -> errors += "$p shares its mount directory $dir with $other" }
+            }
+        }
+        if (contract.overlays.isNotEmpty()) {
+            for (v in contract.vars) {
+                if (v.secret || v.configKey == null) continue
+                for (o in contract.overlays) {
+                    if (v.configKey.split(o.keySeparator).size > MAX_KEY_DEPTH) {
+                        warnings += "${v.name}: configKey ${v.configKey} is deeper than $MAX_KEY_DEPTH levels, so overlay ${o.name} cannot carry it"
+                    }
+                }
+            }
+        }
         return Result(errors, warnings)
     }
+
+    /** How deep a `configKey` may nest in an overlay (`#MaxKeyDepth` in the meta-schema). */
+    public const val MAX_KEY_DEPTH: Int = 8
+
+    private fun isNormalisedAbsolute(path: String): Boolean =
+        absPath.matches(path) && !path.contains("//") && !path.endsWith("/") && path.split('/').none { it == "." || it == ".." }
 
     /** Throws [DeclarationException] when [contract] has errors; returns the warnings. */
     public fun require(contract: Contract): List<String> {

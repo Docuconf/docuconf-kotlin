@@ -27,6 +27,15 @@ public object MarkdownWriter {
                 append("| `${f.name}` | $type | $path | ${if (f.required) "yes" else "no"} | ${cell(f.description)} |\n")
             }
         }
+        if (contract.overlays.isNotEmpty()) {
+            append("\n## Config-file overlays\n\n")
+            append("Files the platform may mount between the app's own config files and environment variables. ")
+            append("Each value goes at its variable's config key.\n\n")
+            append("| Name | Format | Path | Key separator | Reload | Description |\n|---|---|---|---|---|---|\n")
+            for (o in contract.overlays.sortedBy { it.name }) {
+                append("| `${o.name}` | ${o.format.wire} | `${o.path}` | `${o.keySeparator}` | ${o.reload.wire} | ${cell(o.description ?: "")} |\n")
+            }
+        }
     }
 
     private fun constraints(v: VarSpec): String = listOfNotNull(

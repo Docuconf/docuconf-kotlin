@@ -160,6 +160,27 @@ class DeclarationChecksTest {
     private val gen = Generator("kotlin", "test", "0")
 
     @Test
+    fun checksOverlays() {
+        val vars = listOf(VarSpec("A_B_C_D_E_F_G_H_I", VarType.STRING, "Deeply nested", configKey = "a.b.c.d.e.f.g.h.i"))
+        val c = Contract(
+            "svc", gen, vars,
+            overlays = listOf(
+                OverlaySpec("platform", ConfigFormat.YAML, "/app/config/svc.yaml", "/", description = "abc"),
+                OverlaySpec("platform", ConfigFormat.JSON, "/app/config/other.json", ":"),
+                OverlaySpec("relative", ConfigFormat.JSON, "config/svc.json", "."),
+            ),
+        )
+        val r = DeclarationChecks.check(c)
+        val text = r.errors.joinToString("\n")
+        for (needle in listOf("keySeparator", "at least 5", "declared more than once", "shares its mount directory /app/config", "absolute and normalised")) {
+            assertTrue(needle in text, "missing \"$needle\" in:\n$text")
+        }
+        assertTrue(r.warnings.any { "deeper than 8" in it }, r.warnings.toString())
+        val cue = CueWriter.write(c.copy(overlays = c.overlays.take(1)))
+        assertTrue("overlays: {\n\t\tplatform: {\n\t\t\tdescription: \"abc\"\n\t\t\tformat: \"yaml\"" in cue, cue)
+    }
+
+    @Test
     fun reportsEveryProblem() {
         val c = Contract(
             "Bad_Name", gen,
