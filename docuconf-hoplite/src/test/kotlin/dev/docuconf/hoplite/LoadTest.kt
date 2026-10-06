@@ -171,6 +171,20 @@ class LoadTest {
     }
 
     @Test
+    fun unresolvedInjectorReferenceFailsWithoutPrintingIt(@TempDir root: Path) {
+        val w = World(root)
+        w.env["DB_URL"] = "vault:secret/data/gateway/db#url"
+        val e = assertFailsWith<ConfigViolationException> { Docuconf.load<GatewayConfig>(w.options) }
+        assertEquals(
+            listOf(Violation(Codes.INVALID_TYPE, "DB_URL", "holds an unresolved vault: reference; the injector that should resolve it did not run")),
+            e.violations,
+        )
+        val log = Files.readString(w.terminationLog)
+        assertContains(log, "DB_URL: invalid_type: holds an unresolved vault: reference")
+        for (text in listOf(e.message!!, log)) assertFalse("secret/data/gateway" in text, text)
+    }
+
+    @Test
     fun reportsAllViolationsTogether(@TempDir root: Path) {
         val w = World(root)
         w.env.remove("POD_NAMESPACE")

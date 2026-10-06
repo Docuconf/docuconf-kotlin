@@ -145,17 +145,36 @@ public data class FileSpec(
     val isSecret: Boolean get() = secret || type == FileType.TLS || type == FileType.KEYSTORE
 }
 
+/**
+ * A config-file overlay (SPEC §4.7): one more file in the host's format, mounted by the platform and
+ * layered between the files baked into the image and environment variables. Each variable it may
+ * carry is written at the variable's `configKey`, split on [keySeparator].
+ */
+public data class OverlaySpec(
+    val name: String,
+    val format: ConfigFormat,
+    val path: String,
+    val keySeparator: String,
+    val description: String? = null,
+    val reload: Reload = Reload.RESTART,
+) {
+    /** The directory the platform mounts. */
+    val mountDir: String get() = path.substringBeforeLast('/').ifEmpty { "/" }
+}
+
 /** `metadata.generator`. */
 public data class Generator(val language: String, val sdk: String, val version: String)
 
-/** A service's declaration: everything that goes into `contract.cue`. Vars and files are sorted by name on export. */
+/** A service's declaration: everything that goes into `contract.cue`. Vars, files and overlays are sorted by name on export. */
 public data class Contract(
     val service: String,
     val generator: Generator,
     val vars: List<VarSpec>,
     val files: List<FileSpec> = emptyList(),
     val appVersion: String? = null,
+    val overlays: List<OverlaySpec> = emptyList(),
 ) {
     public fun variable(name: String): VarSpec? = vars.firstOrNull { it.name == name }
     public fun file(name: String): FileSpec? = files.firstOrNull { it.name == name }
+    public fun overlay(name: String): OverlaySpec? = overlays.firstOrNull { it.name == name }
 }

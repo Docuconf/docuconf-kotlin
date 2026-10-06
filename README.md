@@ -116,12 +116,14 @@ contract.#Contract & {
 			description: "Postgres connection string"
 			required: true
 			secret: true
+			configKey: "db.url"
 			schemes: ["postgres"]
 		}
 		PORT: { ... }
 		TIMEOUT: {
 			type: "duration"
 			description: "Upstream request timeout"
+			configKey: "timeout"
 			encoding: "iso8601"
 			max: "1m"
 			default: "10s"
@@ -301,6 +303,24 @@ Error codes are the SPEC §11.2 set: `missing_required`, `invalid_type`, `out_of
 `certificate_invalid`, `certificate_expiring`, `certificate_name_mismatch`, `key_mismatch`,
 `keystore_unreadable`. Secret values (and secret file contents) never appear in messages.
 
+### Injected secrets
+
+Platforms often inject values when the container starts: Bank-Vaults' `vault-env` resolves
+`vault:secret/data/db#url`, wrappers such as `op run` resolve `op://` references, operators add
+variables themselves. docuconf needs no code for this: it reads the environment as the process sees
+it, after injection, and validates injected values like any other. It never resolves references
+itself.
+
+If the injector did not run, a secret variable still holds the reference. docuconf reports that
+outright, naming the variable and the scheme but never the value:
+
+```
+DATABASE_URL: invalid_type: holds an unresolved vault: reference; the injector that should resolve it did not run
+```
+
+The schemes recognised are `vault:`, `op://` and `ref+` (SPEC §4.5.1). Only secret variables are
+checked, since a non-secret string may legitimately start with `vault:`.
+
 Options (`Docuconf.load<T> { ... }`):
 
 | Option | Default | |
@@ -330,6 +350,49 @@ variable with a value in a base file is exported as optional. A secret with a va
 a declaration error: it would ship the secret inside the image. Profile files (SPEC §4.4 `profiles`)
 are not supported in v0.1.
 
+### Config-file overlays
+
+Platforms often mount one more config file per environment, from a ConfigMap. Declare it on the root
+config class with `@ConfigOverlay` (repeatable):
+
+```kotlin
+@ConfigOverlay(name = "platform", path = "/app/config/gateway.yaml", description = "Settings the platform supplies per environment")
+data class GatewayConfig(
+    @Doc("HTTP listen port") @Min(1) @Max(65535) val port: Int = 8080,
+    @Doc("Upstream request timeout") val timeout: Duration = Duration.ofSeconds(30),
+    val db: Database,
+)
+
+val config = Docuconf.load<GatewayConfig> { baseSources = listOf("/application.yaml") }
+```
+
+- **Precedence** is fixed (SPEC §4.7): base files < overlay < environment variables. docuconf adds the
+  overlay as a Hoplite property source after the environment source and before `baseSources`
+  (Hoplite lets earlier sources win). An empty env value counts as unset, so the overlay applies.
+- **Format** follows the extension: `.yaml`/`.yml`, `.json` or `.toml`, with the Hoplite parser
+  module on the classpath. Keys nest as Hoplite reads config files, so the contract declares
+  `keySeparator: "."` and every variable's `configKey` is its property path (`db.poolSize`), the key
+  the platform writes it at:
+  ```yaml
+  db:
+    poolSize: 30
+  port: 9100
+  timeout: PT1M30S   # durations in the variable's encoding (iso8601)
+  ```
+- The file is **optional**: a missing or empty overlay is fine. `DOCUCONF_FILE_ROOT` is prepended to
+  its path, as for file inputs.
+- Overlay values are **checked like env values** (type, constraints, `missing_required` is satisfied
+  by an overlay value), with the overlay and key in the message. A malformed overlay is
+  `file_malformed`; a secret in an overlay is `invalid_type` (secrets come from the environment).
+- The platform mounts the overlay's **directory**, hiding what the image has there, so its directory
+  must not hold files the app ships with. docuconf rejects an overlay in the directory of the app's
+  jar or classes, or of a `baseSources` file, and the contract checks reject reserved directories
+  such as `/app`. Use a directory of its own, such as `/app/config`.
+- **`reload = Reload.WATCH` is rejected** at declaration time. Hoplite's reload support
+  (`hoplite-watch`'s `ReloadableConfig`) re-runs Hoplite alone, which would bind a changed overlay
+  without docuconf's checks, so docuconf does not claim it. With `restart`, the platform renders an
+  immutable ConfigMap and a change rolls the pods.
+
 ## Mobile (Android and iOS)
 
 Android and iOS apps do not get per-environment configuration from Kubernetes: their configuration
@@ -354,7 +417,8 @@ The contract format may need a build-time variant for this (SPEC §13, open ques
 
 ## Not done in v0.1
 
-- `reload: watch` (file watching); file inputs are read once.
+- `reload: watch` (file watching); file inputs and overlays are read once, and overlays declared
+  `watch` are rejected.
 - Profiles (`profiles` in the contract) from per-environment files.
 - `indexed` and `json` list encodings (Hoplite reads lists as `csv`, or as `NAME_0`, `NAME_1`
   variables, which do not match the spec's `NAME__0` form).

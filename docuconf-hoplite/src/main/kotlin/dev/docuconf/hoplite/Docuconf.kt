@@ -10,6 +10,8 @@ import com.sksamuel.hoplite.MapNode
 import com.sksamuel.hoplite.Node
 import com.sksamuel.hoplite.StringNode
 import com.sksamuel.hoplite.Undefined
+import com.sksamuel.hoplite.NullNode
+import com.sksamuel.hoplite.addPathSource
 import com.sksamuel.hoplite.addResourceOrFileSource
 import com.sksamuel.hoplite.fp.getOrElse
 import com.sksamuel.hoplite.sources.EnvironmentVariablesPropertySource
@@ -76,7 +78,7 @@ public class DocuconfOptions {
     /**
      * Customises the Hoplite [ConfigLoaderBuilder] (decoders, preprocessors, extra sources). docuconf
      * starts from `defaultWithoutPropertySources()` and adds its own environment source, which treats
-     * an empty value as unset. Sources added here rank below environment variables.
+     * an empty value as unset. Sources added here rank below environment variables, overlays and base sources.
      */
     public fun hoplite(configure: ConfigLoaderBuilder.() -> Unit) {
         hopliteConfig = configure
@@ -131,31 +133,50 @@ public object Docuconf {
         val env = options.effectiveEnv()
         val decl = declaration(type, options.prefix)
         val vars = effectiveVars(decl, options)
-        val contract = Contract("check", Generator("kotlin", SDK, VERSION), vars.map { it.spec }, decl.files.map { it.spec })
+        val contract = Contract("check", Generator("kotlin", SDK, VERSION), vars.map { it.spec }, decl.files.map { it.spec }, overlays = decl.overlays)
         val warnings = ArrayList(DeclarationChecks.require(contract) + decl.warnings)
+        val classLoader = type.java.classLoader ?: Docuconf::class.java.classLoader
+        val fileRoot = options.fileRoot ?: env["DOCUCONF_FILE_ROOT"]
 
         val violations = ArrayList<Violation>()
+        // Overlays (SPEC §4.7): their values are checked like env values, and Hoplite layers them
+        // between the base files and the environment.
+        val overlayPaths = decl.overlays.associateWith { Overlays.resolve(it, fileRoot) }
+        Overlays.checkDirs(decl.overlays, { overlayPaths.getValue(it) }, Overlays.shippedDirs(type, options.baseSources, classLoader))
+        val overlays = decl.overlays.map { Overlays.load(it, overlayPaths.getValue(it), classLoader, violations) }
+
         val hostOptions = ValueChecks.Options(trimListItems = true, hostDuration = ::hopliteDuration, lenientBools = setOf("t", "f", "1", "0", "yes", "no"))
         val filteredEnv = HashMap(env)
         for (v in vars) {
             val raw = env[v.spec.name]
-            if (ValueChecks.isUnset(v.spec, raw)) {
-                // Hoplite would fail to parse "" for a non-string type; unset lets the default apply.
+            // Hoplite reads sources in order, so the first overlay declared that holds the key wins.
+            val fromOverlay = overlays.firstNotNullOfOrNull { o ->
+                o.root?.let { Overlays.at(it, v.path) }?.takeIf { it !is Undefined && it !is NullNode }?.let { o to it }
+            }
+            val unset = ValueChecks.isUnset(v.spec, raw)
+            if (unset) {
+                // Hoplite would fail to parse "" for a non-string type; unset lets the overlay or default apply.
                 filteredEnv.remove(v.spec.name)
-            } else {
+            }
+            if (!unset || fromOverlay != null) {
                 v.spec.deprecated?.let { d -> warnings += "${v.spec.name} is deprecated: ${d.message}" + (d.replacedBy?.let { r -> " Use $r." } ?: "") }
             }
-            violations += ValueChecks.check(v.spec, raw, hostOptions)
+            when {
+                fromOverlay != null && (unset || v.spec.secret) -> violations += Overlays.check(v, fromOverlay.second, fromOverlay.first.spec, hostOptions)
+                else -> {
+                    if (fromOverlay != null) warnings += "${v.spec.name} is set in the environment and in overlay ${fromOverlay.first.spec.name}; the environment wins"
+                    violations += ValueChecks.check(v.spec, raw, hostOptions)
+                }
+            }
         }
 
-        val classLoader = type.java.classLoader ?: Docuconf::class.java.classLoader
         for (f in decl.files) {
             val format = f.spec.format
             if (f.spec.type == FileType.CONFIG && format != null && parserFor(format, classLoader) == null) {
                 throw DeclarationException(listOf("file ${f.spec.name}: no Hoplite parser for ${format.wire} on the classpath; add ${parserModule(format)}"))
             }
         }
-        val files = FileLoader(env, options.fileRoot ?: env["DOCUCONF_FILE_ROOT"], options.clock, classLoader, options.hopliteConfig)
+        val files = FileLoader(env, fileRoot, options.clock, classLoader, options.hopliteConfig)
         for (f in decl.files) {
             if (f.spec.deprecated != null && Files.exists(files.resolve(f.spec))) warnings += "file ${f.spec.name} is deprecated: ${f.spec.deprecated!!.message}"
             files.load(f)
@@ -172,6 +193,8 @@ public object Docuconf {
                 .addDecoder(FileInputDecoder(files.loaded))
                 .addPropertySource(MapPropertySource(markers))
                 .addPropertySource(EnvironmentVariablesPropertySource({ filteredEnv }, prefix))
+                // Hoplite: earlier sources win. So: environment > overlays > base files (SPEC §4.7).
+                .apply { overlays.forEach { addPathSource(it.path, optional = true, allowEmpty = true) } }
                 .apply { options.baseSources.forEach { addResourceOrFileSource(it) } }
                 .apply(options.hopliteConfig)
                 .build()
@@ -198,7 +221,10 @@ public object Docuconf {
             vars = effectiveVars(decl, options).map { it.spec },
             files = decl.files.map { it.spec },
             appVersion = appVersion,
+            overlays = decl.overlays,
         )
+        val classLoader = type.java.classLoader ?: Docuconf::class.java.classLoader
+        Overlays.checkDirs(decl.overlays, { Path.of(it.path) }, Overlays.shippedDirs(type, options.baseSources, classLoader))
         (DeclarationChecks.require(contract) + decl.warnings).forEach(options.warn)
         return contract
     }

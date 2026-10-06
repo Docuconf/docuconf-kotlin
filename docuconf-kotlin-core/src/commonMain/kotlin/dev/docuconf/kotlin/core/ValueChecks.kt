@@ -28,10 +28,25 @@ public object ValueChecks {
     /** Whether a raw value counts as unset: absent, or empty for any type except string (SPEC §5). */
     public fun isUnset(spec: VarSpec, raw: String?): Boolean = raw == null || (raw.isEmpty() && spec.type != VarType.STRING)
 
+    /**
+     * Reference schemes of secret injectors (Bank-Vaults `vault:`, 1Password `op://`, vals `ref+`).
+     * A secret that still starts with one was never resolved: the injector did not run (SPEC §4.5.1).
+     */
+    public val injectorSchemes: List<String> = listOf("vault:", "op://", "ref+")
+
+    /** The injector scheme [raw] starts with, or null. */
+    public fun unresolvedReference(raw: String): String? = injectorSchemes.firstOrNull { raw.startsWith(it) }
+
     /** All violations for [spec] given its raw value (null when the variable is not in the environment). */
     public fun check(spec: VarSpec, raw: String?, options: Options = Options()): List<Violation> {
         if (isUnset(spec, raw)) {
             return if (spec.required) listOf(Violation(Codes.MISSING_REQUIRED, spec.name, "required, but not set")) else emptyList()
+        }
+        if (spec.secret) {
+            // Reported on its own: the scheme or pattern checks would only describe the reference.
+            unresolvedReference(raw!!)?.let { scheme ->
+                return listOf(Violation(Codes.INVALID_TYPE, spec.name, "holds an unresolved $scheme reference; the injector that should resolve it did not run"))
+            }
         }
         return Checker(spec, raw!!, options).run()
     }

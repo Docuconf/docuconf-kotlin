@@ -7,7 +7,7 @@ import java.net.URI
 import java.time.Duration
 import kotlin.time.Duration.Companion.seconds
 
-// The fixture declaration: every variable type and every file input type. Exported to
+// The fixture declaration: every variable type, every file input type and an overlay. Exported to
 // src/test/resources/golden/gateway.cue.
 
 @Suppress("EnumEntryName")
@@ -43,6 +43,7 @@ data class Partner(
     val keystore: Keystore? = null,
 )
 
+@ConfigOverlay(name = "platform", path = "/app/config/gateway.yaml", description = "Settings the platform supplies per environment")
 data class GatewayConfig(
     @Doc("HTTP listen port") @Min(1) @Max(65535) val port: Int = 8080,
     @Doc("Minimum log level emitted") val logLevel: LogLevel = LogLevel.info,

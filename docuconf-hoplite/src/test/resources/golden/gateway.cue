@@ -23,6 +23,7 @@ contract.#Contract & {
 		BROKERS: {
 			type: "list"
 			description: "Kafka brokers to publish access logs to"
+			configKey: "brokers"
 			examples: ["kafka-0:9092"]
 			items: "string"
 			encoding: "csv"
@@ -32,6 +33,7 @@ contract.#Contract & {
 		COMPRESS: {
 			type: "bool"
 			description: "Whether to gzip responses"
+			configKey: "compress"
 			default: true
 		}
 		DB_POOLSIZE: {
@@ -49,11 +51,13 @@ contract.#Contract & {
 			required: true
 			secret: true
 			group: "database"
+			configKey: "db.url"
 			schemes: ["postgres", "postgresql"]
 		}
 		IDLE: {
 			type: "duration"
 			description: "How long idle upstream connections are kept"
+			configKey: "idle"
 			encoding: "iso8601"
 			default: "1m30s"
 		}
@@ -76,16 +80,19 @@ contract.#Contract & {
 			type: "string"
 			description: "Password for the partner mTLS keystore"
 			secret: true
+			configKey: "partner.password"
 		}
 		POD_NAMESPACE: {
 			type: "string"
 			description: "Namespace the gateway runs in, for metrics labels"
 			required: true
 			group: "runtime"
+			configKey: "pod.namespace"
 		}
 		PORT: {
 			type: "int"
 			description: "HTTP listen port"
+			configKey: "port"
 			min: 1
 			max: 65535
 			default: 8080
@@ -125,6 +132,7 @@ contract.#Contract & {
 			type: "string"
 			description: "Cloud region code"
 			group: "cloud"
+			configKey: "region"
 			maxLength: 20
 			pattern: "^[a-z]{2}-[a-z]+-[0-9]$"
 			default: "eu-west-1"
@@ -132,12 +140,14 @@ contract.#Contract & {
 		TIER: {
 			type: "enum"
 			description: "Billing tier of this deployment"
+			configKey: "tier"
 			values: ["free", "pro"]
 			default: "free"
 		}
 		TIMEOUT: {
 			type: "duration"
 			description: "Upstream request timeout"
+			configKey: "timeout"
 			encoding: "iso8601"
 			min: "1s"
 			max: "5m"
@@ -226,6 +236,15 @@ contract.#Contract & {
 			description: "Private CAs the gateway trusts for upstream TLS"
 			path: "/etc/gateway/ca/bundle.pem"
 			pathEnv: "SSL_CERT_FILE"
+		}
+	}
+	overlays: {
+		platform: {
+			description: "Settings the platform supplies per environment"
+			format: "yaml"
+			path: "/app/config/gateway.yaml"
+			keySeparator: "."
+			reload: "restart"
 		}
 	}
 }
