@@ -301,6 +301,24 @@ Error codes are the SPEC §11.2 set: `missing_required`, `invalid_type`, `out_of
 `certificate_invalid`, `certificate_expiring`, `certificate_name_mismatch`, `key_mismatch`,
 `keystore_unreadable`. Secret values (and secret file contents) never appear in messages.
 
+### Injected secrets
+
+Platforms often inject values when the container starts: Bank-Vaults' `vault-env` resolves
+`vault:secret/data/db#url`, wrappers such as `op run` resolve `op://` references, operators add
+variables themselves. docuconf needs no code for this: it reads the environment as the process sees
+it, after injection, and validates injected values like any other. It never resolves references
+itself.
+
+If the injector did not run, a secret variable still holds the reference. docuconf reports that
+outright, naming the variable and the scheme but never the value:
+
+```
+DATABASE_URL: invalid_type: holds an unresolved vault: reference; the injector that should resolve it did not run
+```
+
+The schemes recognised are `vault:`, `op://` and `ref+` (SPEC §4.5.1). Only secret variables are
+checked, since a non-secret string may legitimately start with `vault:`.
+
 Options (`Docuconf.load<T> { ... }`):
 
 | Option | Default | |

@@ -118,6 +118,20 @@ class ValueChecksTest {
     }
 
     @Test
+    fun unresolvedInjectorReferencesInSecrets() {
+        val dsn = VarSpec("DATABASE_URL", VarType.URL, "Database URL", secret = true, schemes = listOf("postgres"))
+        for ((raw, scheme) in listOf("vault:secret/data/db#url" to "vault:", "op://prod/db/url" to "op://", "ref+awssm://db/url" to "ref+")) {
+            val v = ValueChecks.check(dsn, raw)
+            assertEquals(listOf(Codes.INVALID_TYPE), v.map { it.code }, raw)
+            assertEquals("DATABASE_URL: invalid_type: holds an unresolved $scheme reference; the injector that should resolve it did not run", v.single().toString())
+            assertFalse(raw.removePrefix(scheme) in v.single().message)
+        }
+        // A resolved value passes; a non-secret is checked as usual (a string may legitimately start with vault:).
+        assertEquals(emptyList(), codes(dsn, "postgres://db/app"))
+        assertEquals(emptyList(), codes(VarSpec("ADDR", VarType.STRING, "Vault address"), "vault:8200"))
+    }
+
+    @Test
     fun enumsListsDurations() {
         val level = VarSpec("LEVEL", VarType.ENUM, "Log level", values = listOf("info", "debug"))
         assertEquals(listOf(Codes.NOT_IN_ENUM), codes(level, "INFO"))
