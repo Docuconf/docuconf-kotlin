@@ -17,7 +17,7 @@ jobs:
         java: ["17", "21"]
     steps:
       - uses: actions/checkout@v4
-      # The meta-schema the export test vets contracts against.
+      # The meta-schema the export test vets contracts against, and the conformance cases.
       - uses: actions/checkout@v4
         with:
           repository: docuconf/docuconf-go
@@ -36,6 +36,9 @@ jobs:
         env:
           DOCUCONF_SPEC_DIR: ${{ github.workspace }}/docuconf-go/spec/cue
           DOCUCONF_REQUIRE_CUE: "1"
+          # The shared conformance suite (SPEC §12), run through the contract-first mode.
+          DOCUCONF_CONFORMANCE: ${{ github.workspace }}/docuconf-go/conformance/cases.json
+          DOCUCONF_REQUIRE_CONFORMANCE: "1"
       - if: always()
         uses: actions/upload-artifact@v4
         with:
