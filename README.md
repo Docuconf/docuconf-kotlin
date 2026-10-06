@@ -13,8 +13,7 @@ file inputs). From that one class it
 Target: server-side Kotlin on the JVM (Ktor, http4k, Spring-less services) running on Kubernetes.
 See [Mobile](#mobile-android-and-ios) for how the code is laid out for Android and iOS later.
 
-Status: v0.1, `apiVersion: docuconf.dev/v1alpha1`. **Licence: pending.** There is no LICENSE file
-yet, and none is granted until one is added.
+Status: v0.1, `apiVersion: docuconf.dev/v1alpha1`. Licence: [MIT](LICENSE).
 
 | Artifact | What it is |
 |---|---|
@@ -442,4 +441,4 @@ Releases: see [RELEASING.md](RELEASING.md).
 
 ## Licence
 
-Pending. No licence file is included yet.
+[MIT](LICENSE).

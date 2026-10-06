@@ -29,6 +29,5 @@ mavenPublishing {
     pom {
         name.set("docuconf Kotlin core")
         description.set("docuconf declaration model, CUE contract writer and value checks (Kotlin Multiplatform).")
-        // Licence pending: see README.
     }
 }
