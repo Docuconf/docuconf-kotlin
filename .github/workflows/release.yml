@@ -58,3 +58,72 @@ jobs:
           ORG_GRADLE_PROJECT_signingInMemoryKey: ${{ secrets.SIGNING_KEY }}
           ORG_GRADLE_PROJECT_signingInMemoryKeyId: ${{ secrets.SIGNING_KEY_ID }}
           ORG_GRADLE_PROJECT_signingInMemoryKeyPassword: ${{ secrets.SIGNING_KEY_PASSWORD }}
+
+  # Also publishes docuconf-kotlin-core and docuconf-hoplite to GitHub Packages
+  # (maven.pkg.github.com), unsigned, and attaches the jars to the GitHub
+  # Release for the tag. It runs the same checks as `publish` but does not
+  # depend on it, so it works with only the workflow's GITHUB_TOKEN. See
+  # RELEASING.md.
+  github:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # create the GitHub Release and upload its assets
+      packages: write # publish to maven.pkg.github.com
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: docuconf/docuconf-go
+          path: docuconf-go
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+          cache: false
+      - run: go install cuelang.org/go/cmd/cue@v0.17.1
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Check the tag matches gradle.properties
+        run: |
+          version=$(sed -n 's/^VERSION_NAME=//p' gradle.properties)
+          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "Tag $GITHUB_REF_NAME does not match VERSION_NAME $version" >&2
+            exit 1
+          fi
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+
+      - run: ./gradlew check
+        env:
+          DOCUCONF_SPEC_DIR: ${{ github.workspace }}/docuconf-go/spec/cue
+          DOCUCONF_REQUIRE_CUE: "1"
+          DOCUCONF_CONFORMANCE: ${{ github.workspace }}/docuconf-go/conformance/cases.json
+          DOCUCONF_REQUIRE_CONFORMANCE: "1"
+
+      - run: ./gradlew publishAllPublicationsToGitHubPackagesRepository --no-configuration-cache
+        env:
+          ORG_GRADLE_PROJECT_GitHubPackagesUsername: ${{ github.actor }}
+          ORG_GRADLE_PROJECT_GitHubPackagesPassword: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Attach the jars to the GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if ! gh release view "$GITHUB_REF_NAME" > /dev/null 2>&1; then
+            flags=()
+            case "$VERSION" in *-*) flags+=(--prerelease) ;; esac
+            gh release create "$GITHUB_REF_NAME" --verify-tag --generate-notes --title "docuconf-kotlin $VERSION" "${flags[@]}"
+          fi
+          # Gradle names the jars without the version; add it for the release assets.
+          mkdir -p release-assets
+          for f in docuconf-kotlin-core/build/libs/docuconf-kotlin-core-jvm*.jar docuconf-hoplite/build/libs/docuconf-hoplite*.jar; do
+            base=$(basename "$f" .jar)
+            case "$base" in
+              *-sources | *-javadoc) name="${base%-*}-$VERSION-${base##*-}.jar" ;;
+              *) name="$base-$VERSION.jar" ;;
+            esac
+            cp "$f" "release-assets/$name"
+          done
+          gh release upload "$GITHUB_REF_NAME" release-assets/*.jar --clobber
