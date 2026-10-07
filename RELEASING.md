@@ -125,3 +125,26 @@ and the repository, with the same `<id>`, to the `pom.xml`:
 Without a token, download the jars from the GitHub Release and add them as file dependencies
 (`implementation(files("libs/docuconf-hoplite-0.1.0.jar", "libs/docuconf-kotlin-core-jvm-0.1.0.jar"))`, plus Hoplite
 itself from Maven Central).
+
+## docuconf-go version
+
+docuconf-go owns the spec, the CUE meta-schema (`spec/cue`), the conformance suite (`conformance/cases.json`) and the
+`docuconf` CLI. This SDK is tested against one docuconf-go commit, pinned in `.github/docuconf-go.ref` (a full SHA).
+
+- **CI** checks out that commit on pushes and pull requests. The nightly scheduled run uses docuconf-go `main` instead,
+  so a spec change that breaks this SDK shows up within a day. To try another docuconf-go commit or branch, run the CI
+  workflow by hand (Actions, CI, Run workflow) with `docuconf_go_ref` set. Releases always build against the pinned commit.
+- **Bump PRs.** `.github/workflows/docuconf-go-bump.yml` opens (or updates) a `build(deps): bump docuconf-go to <sha>`
+  pull request from the `docuconf-go-bump` branch whenever docuconf-go `main` moves: immediately when docuconf-go sends
+  a `docuconf-go-updated` dispatch (this needs the release GitHub App), otherwise on its daily schedule. CI on that PR
+  is the compatibility check; merge it when it is green, or fix the SDK on the same branch. It can also be run by hand
+  with a specific `sha`.
+- **`scripts/conformance.sh`** runs only the docuconf-go-facing checks (the conformance suite and the `cue vet` of
+  exported contracts) against any checkout: `DOCUCONF_GO_DIR=../docuconf-go scripts/conformance.sh`. CI runs it, and
+  so does docuconf-go's downstream workflow, which runs it against every docuconf-go pull request that touches the spec,
+  the conformance suite or the CLI. It needs JDK 17+ and `cue` on `PATH`, and sets this build's `DOCUCONF_SPEC_DIR` and `DOCUCONF_REQUIRE_CUE` from the contract's `DOCUCONF_SPEC_CUE` and `DOCUCONF_REQUIRE_VET`.
+
+Without the release App (secrets `RELEASE_APP_ID` and `RELEASE_APP_PRIVATE_KEY`) the bump workflow uses
+`GITHUB_TOKEN`: the repository setting "Allow GitHub Actions to create and approve pull requests" must be on, and
+because a PR opened that way triggers no workflows, the bump workflow starts CI on the branch itself
+(`workflow_dispatch`, whose checks show on the PR).
