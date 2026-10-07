@@ -1,8 +1,10 @@
 # Releasing
 
-Two artifacts go to Maven Central through the [Central Portal](https://central.sonatype.com):
+Three artifacts go to Maven Central through the [Central Portal](https://central.sonatype.com):
 `dev.docuconf:docuconf-kotlin-core` (Kotlin Multiplatform: the root module plus
-`docuconf-kotlin-core-jvm`) and `dev.docuconf:docuconf-hoplite`. Publishing uses the
+`docuconf-kotlin-core-jvm`), `dev.docuconf:docuconf-hoplite` and `dev.docuconf:docuconf-ktor`. The
+`dev.docuconf` Gradle plugin (`docuconf-gradle-plugin/`, an included build) goes to the Gradle Plugin
+Portal; its publishing (`com.gradle.plugin-publish` and a Portal key) is not set up yet. Publishing uses the
 [vanniktech maven-publish plugin](https://vanniktech.github.io/gradle-maven-publish-plugin/central/),
 which uploads to the Central Portal and signs with an in-memory GPG key.
 
@@ -45,9 +47,13 @@ place; Central rejects POMs without `<licenses>`.
 
 ## Each release
 
-1. Set `VERSION_NAME` in `gradle.properties` and `Docuconf.VERSION` in
-   `docuconf-hoplite/src/main/kotlin/dev/docuconf/hoplite/Docuconf.kt` to the new version (a test
-   fails if they differ). Update the golden contract (`UPDATE_GOLDEN=1`), since it records the version.
+1. Between releases `VERSION_NAME` is a `-SNAPSHOT` (`0.1.0-SNAPSHOT`), so `publishToMavenLocal`
+   never writes a release version into anyone's `~/.m2`. For the release, set `VERSION_NAME` in
+   `gradle.properties` and in `docuconf-gradle-plugin/gradle.properties` to the release version, and
+   `Docuconf.VERSION` in `docuconf-hoplite/src/main/kotlin/dev/docuconf/hoplite/Docuconf.kt` to the
+   same version without `-SNAPSHOT` (a test fails if they differ). Update the golden contract
+   (`UPDATE_GOLDEN=1`) when the version changes, since it records it. Update the README's Install
+   section to the registry coordinates. Afterwards, move `VERSION_NAME` to the next `-SNAPSHOT`.
 2. Run `./gradlew check publishToMavenLocal` and try the artifacts from `~/.m2` in a sample app.
 3. Commit, tag and push: `git tag v0.1.0 && git push origin v0.1.0`.
 4. `.github/workflows/release.yml` checks the tag against `VERSION_NAME`, runs the tests (including

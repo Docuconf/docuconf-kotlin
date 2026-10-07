@@ -1,0 +1,3 @@
+docuconf: 2 configuration problems:
+  PORT: out_of_range: "0" is below min 1
+  DATABASE_URL: missing_required: required, but not set
