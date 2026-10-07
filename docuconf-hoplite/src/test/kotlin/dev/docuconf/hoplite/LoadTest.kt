@@ -22,7 +22,7 @@ import kotlin.time.Duration.Companion.seconds
 /** A complete, valid environment for [GatewayConfig] under a temporary file root. */
 class World(val root: Path) {
     val env = mutableMapOf(
-        "PUBLICURL" to "https://gw.example.com",
+        "PUBLIC_URL" to "https://gw.example.com",
         "POD_NAMESPACE" to "prod",
         "DB_URL" to "postgres://app:hunter2@db/gw",
         "DOCUCONF_FILE_ROOT" to root.toString(),
@@ -67,16 +67,16 @@ class LoadTest {
         val w = World(root)
         w.env += mapOf(
             "PORT" to "9090",
-            "LOGLEVEL" to "debug",
-            "TRACERATIO" to "0.25",
+            "LOG_LEVEL" to "debug",
+            "TRACE_RATIO" to "0.25",
             "COMPRESS" to "false",
             "TIMEOUT" to "PT1M30S",
             "IDLE" to "PT2M",
             "BROKERS" to "a:9092,b:9092",
-            "ADMINPORTS" to "9100,9101",
-            "RATELIMITS" to """{"perMinute":600,"burst":50}""",
+            "ADMIN_PORTS" to "9100,9101",
+            "RATE_LIMITS" to """{"perMinute":600,"burst":50}""",
             "TIER" to "pro",
-            "DB_POOLSIZE" to "20",
+            "DB_POOL_SIZE" to "20",
             "PARTNER_PASSWORD" to "changeit",
         )
         val cfg = Docuconf.load<GatewayConfig>(w.options)
@@ -143,21 +143,21 @@ class LoadTest {
     @Test
     fun listItemOutOfBounds(@TempDir root: Path) {
         val w = World(root)
-        w.env["ADMINPORTS"] = "9100,0,70000"
-        assertEquals(listOf("ADMINPORTS:out_of_range", "ADMINPORTS:out_of_range"), w.violations().map { "${it.input}:${it.code}" })
+        w.env["ADMIN_PORTS"] = "9100,0,70000"
+        assertEquals(listOf("ADMIN_PORTS:out_of_range", "ADMIN_PORTS:out_of_range"), w.violations().map { "${it.input}:${it.code}" })
     }
 
     @Test
     fun intBeyond64BitsIsOutOfRange(@TempDir root: Path) {
         val w = World(root)
-        w.env["DB_POOLSIZE"] = "99999999999999999999"
-        assertEquals(listOf("DB_POOLSIZE:out_of_range"), w.violations().map { "${it.input}:${it.code}" })
+        w.env["DB_POOL_SIZE"] = "99999999999999999999"
+        assertEquals(listOf("DB_POOL_SIZE:out_of_range"), w.violations().map { "${it.input}:${it.code}" })
     }
 
     @Test
     fun emptyStringIsUnsetForNonStrings(@TempDir root: Path) {
         val w = World(root)
-        w.env += mapOf("PORT" to "", "TIMEOUT" to "", "COMPRESS" to "", "LEGACYPORT" to "")
+        w.env += mapOf("PORT" to "", "TIMEOUT" to "", "COMPRESS" to "", "LEGACY_PORT" to "")
         val cfg = Docuconf.load<GatewayConfig>(w.options)
         assertEquals(8080, cfg.port)
         assertEquals(Duration.ofSeconds(30), cfg.timeout)
@@ -204,12 +204,12 @@ class LoadTest {
         w.env.remove("POD_NAMESPACE")
         w.env += mapOf(
             "PORT" to "70000",
-            "LOGLEVEL" to "verbose",
-            "TRACERATIO" to "NaN",
+            "LOG_LEVEL" to "verbose",
+            "TRACE_RATIO" to "NaN",
             "BROKERS" to "",
-            "ADMINPORTS" to "1,2,3,4,5",
-            "RATELIMITS" to """{"perMinute":0}""",
-            "PUBLICURL" to "http://gw.example.com",
+            "ADMIN_PORTS" to "1,2,3,4,5",
+            "RATE_LIMITS" to """{"perMinute":0}""",
+            "PUBLIC_URL" to "http://gw.example.com",
             "TIMEOUT" to "PT10M",
         )
         Files.delete(w.path("/etc/gateway/license/license.key"))
@@ -220,11 +220,11 @@ class LoadTest {
             setOf(
                 "POD_NAMESPACE:missing_required",
                 "PORT:out_of_range",
-                "LOGLEVEL:not_in_enum",
-                "TRACERATIO:invalid_type",
-                "ADMINPORTS:too_many_items",
-                "RATELIMITS:schema_mismatch",
-                "PUBLICURL:invalid_scheme",
+                "LOG_LEVEL:not_in_enum",
+                "TRACE_RATIO:invalid_type",
+                "ADMIN_PORTS:too_many_items",
+                "RATE_LIMITS:schema_mismatch",
+                "PUBLIC_URL:invalid_scheme",
                 "TIMEOUT:out_of_range",
                 "license:file_missing",
                 "routes:schema_mismatch",
@@ -238,9 +238,9 @@ class LoadTest {
     @Test
     fun warnsWhenDeprecatedVariableIsSet(@TempDir root: Path) {
         val w = World(root)
-        w.env["LEGACYPORT"] = "81"
+        w.env["LEGACY_PORT"] = "81"
         Docuconf.load<GatewayConfig>(w.options)
-        assertTrue(w.warnings.any { "LEGACYPORT is deprecated" in it && "PORT" in it }, w.warnings.toString())
+        assertTrue(w.warnings.any { "LEGACY_PORT is deprecated" in it && "PORT" in it }, w.warnings.toString())
     }
 
     @Test

@@ -10,6 +10,55 @@ import dev.docuconf.kotlin.core.Reload
 // and file inputs. All of them go on primary-constructor parameters, except [ConfigOverlay], which
 // goes on the root config class.
 
+/**
+ * The service a root config class belongs to, and how the platform reaches it. Declared once, here,
+ * so loading at boot and exporting the contract always agree: [Docuconf.load], `withDocuconf()` and
+ * the `Export` command all read it.
+ *
+ * @property name the service name in the contract (`metadata.name`), a DNS label such as `orders`.
+ *   `Export --service` may be left out when it is set.
+ * @property prefix prepended to every environment variable name: `APP_` makes `port` read `APP_PORT`.
+ * @property baseSources config files baked into the image, as Hoplite resource-or-file paths
+ *   (`/application.yaml`). Hoplite reads them below environment variables and overlays, and their
+ *   values are exported as defaults (SPEC §4.4).
+ */
+@Target(AnnotationTarget.CLASS)
+@Retention(AnnotationRetention.RUNTIME)
+@MustBeDocumented
+public annotation class DocuconfService(
+    val name: String = "",
+    val prefix: String = "",
+    val baseSources: Array<String> = [],
+)
+
+/**
+ * Sets an environment variable name explicitly. Without it, a property's name is its path in
+ * SCREAMING_SNAKE_CASE: `logLevel` reads `LOG_LEVEL`, and `poolSize` in a nested `db` class reads
+ * `DB_POOL_SIZE`.
+ *
+ * On a variable, [value] is the whole name (`@Env("DATABASE_URL") val db: Secret`). On a nested
+ * config class parameter, it replaces that level's segment for everything inside
+ * (`@Env("PG") val database: Database` gives `PG_URL`). The [DocuconfService.prefix] is still
+ * prepended in both cases.
+ */
+@Target(AnnotationTarget.VALUE_PARAMETER)
+@Retention(AnnotationRetention.RUNTIME)
+@MustBeDocumented
+public annotation class Env(val value: String)
+
+/**
+ * The value an enum constant has on the wire, in the environment and in the contract. Without it the
+ * constant's name is used. Use it for lowercase values with idiomatic Kotlin constants:
+ *
+ * ```
+ * enum class LogLevel { @WireName("debug") DEBUG, @WireName("info") INFO }
+ * ```
+ */
+@Target(AnnotationTarget.FIELD)
+@Retention(AnnotationRetention.RUNTIME)
+@MustBeDocumented
+public annotation class WireName(val value: String)
+
 /** The description of a variable or file input. Required for every input; at least 5 characters. */
 @Target(AnnotationTarget.VALUE_PARAMETER)
 @Retention(AnnotationRetention.RUNTIME)
@@ -59,12 +108,12 @@ public annotation class DecimalMin(val value: Double)
 @Retention(AnnotationRetention.RUNTIME)
 public annotation class DecimalMax(val value: Double)
 
-/** Shortest allowed duration, in Go syntax (`1s`, `1h30m`). */
+/** Shortest allowed duration, in Go syntax (`1s`, `1h30m`) or ISO 8601 (`PT1S`). Exported in Go syntax. */
 @Target(AnnotationTarget.VALUE_PARAMETER)
 @Retention(AnnotationRetention.RUNTIME)
 public annotation class DurationMin(val value: String)
 
-/** Longest allowed duration, in Go syntax (`5m`, `720h`). */
+/** Longest allowed duration, in Go syntax (`5m`, `720h`) or ISO 8601 (`PT5M`). Exported in Go syntax. */
 @Target(AnnotationTarget.VALUE_PARAMETER)
 @Retention(AnnotationRetention.RUNTIME)
 public annotation class DurationMax(val value: String)
@@ -175,7 +224,7 @@ public annotation class KeystoreSpec(val format: KeystoreFormat = KeystoreFormat
 
 /**
  * Declares a config-file overlay (SPEC §4.7): a file the platform mounts, which Hoplite layers
- * between the config files baked into the image ([DocuconfOptions.baseSources]) and environment
+ * between the config files baked into the image ([DocuconfService.baseSources]) and environment
  * variables. Goes on the root config class; repeatable.
  *
  * The format follows the extension of [path] (`.json`, `.yaml`, `.yml`, `.toml`; the Hoplite parser

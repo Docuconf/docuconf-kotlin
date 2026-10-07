@@ -6,6 +6,7 @@ import dev.docuconf.kotlin.core.ConfigFormat
 import dev.docuconf.kotlin.core.DeclarationException
 import dev.docuconf.kotlin.core.Deprecation
 import dev.docuconf.kotlin.core.DurationEncoding
+import dev.docuconf.kotlin.core.Durations
 import dev.docuconf.kotlin.core.FileSpec
 import dev.docuconf.kotlin.core.FileType
 import dev.docuconf.kotlin.core.JsonValue
@@ -46,17 +47,18 @@ internal data class Declaration(
 /**
  * Reads a Hoplite config class into contract inputs.
  *
- * Environment variable names follow Hoplite 3's environment source: `_` separates nesting levels,
- * and within one level Hoplite compares names lower-cased with `_` and `-` removed. So property
- * `port` reads `PORT`, `httpPort` reads `HTTPPORT`, and `db.url` (a nested `db` class) reads `DB_URL`.
- * `HTTP_PORT` would be read as `http.port`, never as `httpPort`.
+ * Environment variable names are the property path in SCREAMING_SNAKE_CASE: `port` reads `PORT`,
+ * `logLevel` reads `LOG_LEVEL`, and `poolSize` in a nested `db` class reads `DB_POOL_SIZE`. [Env]
+ * overrides a name. docuconf hands the values to Hoplite itself, keyed by property path, so Hoplite's
+ * own environment naming (`_` as a nesting level) never applies.
  */
 internal object DeclarationReader {
     private val fileTypes = setOf(ConfigFile::class, TlsKeyPair::class, CaBundle::class, Keystore::class, TextFile::class, BinaryFile::class)
 
     fun read(root: KClass<*>, prefix: String = ""): Declaration {
         val r = Reader(root, prefix)
-        r.walk(root, emptyList(), parentOptional = false, inheritedGroup = null)
+        r.walk(root, emptyList(), emptyList(), parentOptional = false, inheritedGroup = null)
+        r.checkDuplicateNames()
         val overlays = root.findAnnotations(ConfigOverlay::class).map { r.overlay(it) }
         if (r.errors.isNotEmpty()) throw DeclarationException(r.errors)
         return Declaration(root, r.vars, r.files, overlays, r.warnings)
@@ -65,8 +67,34 @@ internal object DeclarationReader {
     /** Hoplite nests config file keys as maps; the contract writes them joined with this separator. */
     const val KEY_SEPARATOR = "."
 
-    /** The env segment Hoplite matches a property name against. */
-    fun envSegment(name: String): String = name.replace("_", "").replace("-", "").uppercase()
+    /** A property name in SCREAMING_SNAKE_CASE: `logLevel` is `LOG_LEVEL`, `httpURL` is `HTTP_URL`, `oauth2Token` is `OAUTH2_TOKEN`. */
+    fun envSegment(name: String): String {
+        val sb = StringBuilder()
+        for (i in name.indices) {
+            val c = name[i]
+            if (c == '_' || c == '-') {
+                sb.append('_')
+                continue
+            }
+            if (c.isUpperCase() && i > 0) {
+                val prev = name[i - 1]
+                val next = name.getOrNull(i + 1)
+                if (prev.isLowerCase() || prev.isDigit() || (prev.isUpperCase() && next != null && next.isLowerCase())) sb.append('_')
+            }
+            sb.append(c.uppercaseChar())
+        }
+        return sb.toString().replace(Regex("_+"), "_").trim('_')
+    }
+
+    /** The wire value of an enum constant: its [WireName], else its name. */
+    fun wireName(e: Enum<*>): String =
+        e.declaringJavaClass.getField(e.name).getAnnotation(WireName::class.java)?.value ?: e.name
+
+    /** Annotations that only mean something on a variable. */
+    private val variableOnly = listOf(
+        Min::class, Max::class, DecimalMin::class, DecimalMax::class, DurationMin::class, DurationMax::class,
+        Url::class, Schemes::class, OneOf::class, Items::class, ItemMin::class, ItemMax::class, Examples::class,
+    )
 
     private class Reader(val root: KClass<*>, val prefix: String) {
         val vars = ArrayList<VarBinding>()
@@ -74,7 +102,17 @@ internal object DeclarationReader {
         val warnings = ArrayList<String>()
         val errors = ArrayList<String>()
 
-        fun walk(k: KClass<*>, path: List<String>, parentOptional: Boolean, inheritedGroup: String?) {
+        /** Names already given to a variable, with the property path that has it. */
+        val names = LinkedHashMap<String, MutableList<List<String>>>()
+
+        fun checkDuplicateNames() {
+            for ((name, paths) in names) {
+                if (paths.size < 2) continue
+                errors += "${paths.joinToString(" and ") { where(it) }} all read $name; rename one or give it another name with @Env(\"...\")"
+            }
+        }
+
+        fun walk(k: KClass<*>, path: List<String>, envPath: List<String>, parentOptional: Boolean, inheritedGroup: String?) {
             val ctor = k.primaryConstructor
             if (ctor == null) {
                 errors += "${where(path)}: ${k.simpleName} has no primary constructor"
@@ -85,8 +123,10 @@ internal object DeclarationReader {
                 val name = p.name ?: continue
                 val here = path + name
                 if (p.annotations.any { it is NotInContract }) continue
+                val env = p.annotations.filterIsInstance<Env>().firstOrNull()?.value
+                val hereEnv = envPath + envSegment(name)
                 if (p.annotations.any { it is ConfigAlias }) {
-                    warnings += "${where(here)}: @ConfigAlias names are not exported; the contract uses ${envName(here)}"
+                    warnings += "${where(here)}: @ConfigAlias names are not exported; the contract uses ${env?.let { prefix + it } ?: envName(hereEnv)}"
                 }
                 val t = p.type
                 val kc = t.classifier as? KClass<*>
@@ -98,10 +138,12 @@ internal object DeclarationReader {
                 val group = p.annotations.filterIsInstance<Group>().firstOrNull()?.value ?: inheritedGroup
                 when {
                     kc in fileTypes -> fileInput(p, kc, here, optional, group)
-                    isScalar(kc, t) -> variable(p, kc, here, optional, group, defaults)
+                    isScalar(kc, t) -> variable(p, kc, here, env?.let { listOf(it) } ?: hereEnv, optional, group, defaults)
                     kc == Map::class -> warnings += "${where(here)}: maps cannot be set by the platform through environment variables; left out of the contract (file-only)"
-                    kc.isData || kc.primaryConstructor != null && !kc.java.isInterface && kc.java.`package`?.name?.startsWith("java.") != true ->
-                        walk(kc, here, optional, group)
+                    kc.isData || kc.primaryConstructor != null && !kc.java.isInterface && kc.java.`package`?.name?.startsWith("java.") != true -> {
+                        nestedAnnotations(p, here)
+                        walk(kc, here, envPath + (env ?: envSegment(name)), optional, group)
+                    }
                     else -> errors += "${where(here)}: type ${kc.qualifiedName} is not supported by docuconf; annotate it @NotInContract"
                 }
             }
@@ -135,13 +177,70 @@ internal object DeclarationReader {
             )
         }
 
-        fun envName(path: List<String>) = prefix + path.joinToString("_") { envSegment(it) }
+        /** The variable name for an env path (segments already in SCREAMING_SNAKE_CASE, or set with @Env). */
+        fun envName(envPath: List<String>) = prefix + envPath.joinToString("_")
+
+        /** Constraint annotations on a nested config class parameter would be dropped: reject them. */
+        fun nestedAnnotations(p: KParameter, path: List<String>) {
+            val misplaced = p.annotations.filter { a -> a !is Group && a !is Env && a !is NotInContract && a.annotationClass.java.`package`?.name == "dev.docuconf.hoplite" }
+            for (a in misplaced) {
+                errors += "${where(path)}: @${a.annotationClass.simpleName} has no effect on a nested config class (${(p.type.classifier as KClass<*>).simpleName}); put it on the properties inside"
+            }
+        }
+
+        /** Rejects annotations that do not apply to a variable of [type] and Kotlin class [k]. */
+        fun applicable(p: KParameter, k: KClass<*>, type: VarType, path: List<String>) {
+            val kind = k.simpleName
+            for (a in p.annotations) {
+                val name = "@${a.annotationClass.simpleName}"
+                val problem: String? = when (a) {
+                    is Min, is Max -> if (type != VarType.INT) {
+                        "$name applies to Int, Long, Short or Byte, not $kind" + when (type) {
+                            VarType.STRING -> "; use @Length(min = ..., max = ...) for a string's length"
+                            VarType.LIST -> "; use @Items for the number of items, or @ItemMin/@ItemMax for each item"
+                            VarType.FLOAT -> "; use @DecimalMin/@DecimalMax"
+                            VarType.DURATION -> "; use @DurationMin/@DurationMax"
+                            else -> ""
+                        }
+                    } else {
+                        null
+                    }
+                    is DecimalMin, is DecimalMax -> if (type != VarType.FLOAT) "$name applies to Double or Float, not $kind" + (if (type == VarType.INT) "; use @Min/@Max" else "") else null
+                    is DurationMin, is DurationMax -> if (type != VarType.DURATION) "$name applies to java.time.Duration or kotlin.time.Duration, not $kind" else null
+                    is Length -> if (type != VarType.STRING) "$name applies to String or Secret (not a URL or enum), not $kind" + (if (type == VarType.LIST) "; use @Items for the number of items" else "") else null
+                    is Pattern -> if (type != VarType.STRING) "$name applies to String or Secret (not a URL or enum), not $kind" else null
+                    is Schemes, is Url -> if (k != String::class && k != Secret::class && k != URI::class && k != URL::class) "$name applies to String, Secret, URI or URL, not $kind" else null
+                    is OneOf -> when {
+                        k != String::class && k != Secret::class -> "$name applies to String, not $kind" + (if (k.java.isEnum) "; an enum class needs no annotation" else "")
+                        p.annotations.any { it is Schemes || it is Url } -> "$name cannot be combined with @Schemes or @Url"
+                        else -> null
+                    }
+                    is Items -> if (type != VarType.LIST) "$name applies to List or Set, not $kind" else null
+                    is FileInput, is Format, is Tls, is MinCertificates, is KeystoreSpec ->
+                        "$name applies to file inputs (ConfigFile, TlsKeyPair, CaBundle, Keystore, TextFile, BinaryFile), not $kind"
+                    else -> null
+                }
+                if (problem != null) errors += "${where(path)}: $problem"
+            }
+        }
+
+        /** A duration bound in Go or ISO 8601 syntax, as Go syntax for the contract; null (and an error) when it is neither. */
+        fun durationBound(value: String?, annotation: String, path: List<String>): String? {
+            if (value == null) return null
+            val nanos = Durations.parseGo(value) ?: Durations.parseIso(value)
+            if (nanos == null) {
+                errors += "${where(path)}: @$annotation(\"$value\") is not a duration; write Go syntax such as \"1m\" or \"1h30m\", or ISO 8601 such as \"PT1M\""
+                return null
+            }
+            return Durations.formatGo(nanos)
+        }
 
         fun where(path: List<String>) = "${root.simpleName}.${path.joinToString(".")}"
 
-        fun variable(p: KParameter, k: KClass<*>, path: List<String>, optional: Boolean, group: String?, defaults: Map<String, Any?>) {
+        fun variable(p: KParameter, k: KClass<*>, path: List<String>, envPath: List<String>, optional: Boolean, group: String?, defaults: Map<String, Any?>) {
             val a = p.annotations
-            val name = envName(path)
+            val name = envName(envPath)
+            names.getOrPut(name) { ArrayList() } += path
             val doc = a.filterIsInstance<Doc>().firstOrNull()?.value
             if (doc == null) errors += "${where(path)}: add @Doc(\"...\") with a description of at least 5 characters"
             val secret = k == Secret::class
@@ -166,8 +265,9 @@ internal object DeclarationReader {
                 k == Json::class -> VarType.JSON
                 else -> error("unreachable")
             }
+            applicable(p, k, type, path)
             val values = when {
-                k.java.isEnum -> k.java.enumConstants.map { (it as Enum<*>).name }
+                k.java.isEnum -> k.java.enumConstants.map { wireName(it as Enum<*>) }
                 oneOf != null -> oneOf
                 else -> null
             }
@@ -214,7 +314,10 @@ internal object DeclarationReader {
             }
             val intItems = type == VarType.LIST && itemClass == Int::class
             val rawDefault = defaults[p.name]
-            val default = if (p.isOptional && rawDefault != null) {
+            val default = if (secret && p.isOptional && rawDefault != null) {
+                errors += "${where(path)}: a secret cannot have a default; remove it, and let the platform set $name"
+                null
+            } else if (p.isOptional && rawDefault != null) {
                 try {
                     toJsonValue(rawDefault)
                 } catch (e: IllegalArgumentException) {
@@ -245,10 +348,10 @@ internal object DeclarationReader {
                     default = default,
                     min = min,
                     max = max,
-                    minDuration = a.filterIsInstance<DurationMin>().firstOrNull()?.value,
-                    maxDuration = a.filterIsInstance<DurationMax>().firstOrNull()?.value,
-                    // Hoplite parses java.time.Duration as ISO-8601 (PT1M30S) but not Go's 1m30s; the
-                    // kotlin.time.Duration decoder docuconf registers accepts the same.
+                    minDuration = durationBound(a.filterIsInstance<DurationMin>().firstOrNull()?.value, "DurationMin", path),
+                    maxDuration = durationBound(a.filterIsInstance<DurationMax>().firstOrNull()?.value, "DurationMax", path),
+                    // The platform renders ISO 8601 (PT1M30S). docuconf's duration decoders also take
+                    // Go syntax (1m30s), for people typing values locally.
                     durationEncoding = DurationEncoding.ISO8601,
                     minLength = length?.min?.takeIf { it >= 0 },
                     maxLength = length?.max?.takeIf { it >= 0 },
@@ -285,6 +388,18 @@ internal object DeclarationReader {
                 Keystore::class -> FileType.KEYSTORE
                 TextFile::class -> FileType.TEXT
                 else -> FileType.BINARY
+            }
+            for (x in a) {
+                val problem = when {
+                    x is Env -> "@Env applies to variables; a file input's path variable is @FileInput(pathEnv = \"...\")"
+                    variableOnly.any { it.isInstance(x) } -> "@${x.annotationClass.simpleName} applies to variables, not file inputs"
+                    (x is Length || x is Pattern) && type != FileType.TEXT -> "@${x.annotationClass.simpleName} applies to a TextFile among file inputs"
+                    x is Format && type != FileType.CONFIG -> "@Format applies to ConfigFile"
+                    x is MinCertificates && type != FileType.CA_BUNDLE -> "@MinCertificates applies to CaBundle"
+                    x is KeystoreSpec && type != FileType.KEYSTORE -> "@KeystoreSpec applies to Keystore"
+                    else -> null
+                }
+                if (problem != null) errors += "${where(path)}: $problem"
             }
             val tls = a.filterIsInstance<Tls>().firstOrNull()
             val keystore = a.filterIsInstance<KeystoreSpec>().firstOrNull()
