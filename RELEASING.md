@@ -11,14 +11,14 @@ signing key stored as GitHub secrets.
 
 ## Before the first release
 
-1. **Add a licence.** The licence is still pending. Central rejects POMs without `<licenses>`: add
-   `POM_LICENCE_NAME`, `POM_LICENCE_URL` and `POM_LICENCE_DIST=repo` to `gradle.properties` and a
-   `LICENSE` file when it is decided.
-2. **Verify the namespace.** In the Central Portal, register and verify the `dev.docuconf` namespace
+The POM licence (MIT, `POM_LICENCE_*` in `gradle.properties`) and the `LICENSE` file are already in
+place; Central rejects POMs without `<licenses>`.
+
+1. **Verify the namespace.** In the Central Portal, register and verify the `dev.docuconf` namespace
    (a DNS TXT record on `docuconf.dev`). Other docuconf SDKs (Java) publish under the same group;
    this one uses distinct artifact IDs.
-3. **Create a Portal user token** (Account, Generate User Token). It has a username and a password.
-4. **Create a signing key** used only for releases and publish its public half:
+2. **Create a Portal user token** (Account, Generate User Token). It has a username and a password.
+3. **Create a signing key** used only for releases and publish its public half:
 
    ```
    gpg --quick-generate-key "docuconf releases <releases@docuconf.dev>" ed25519 sign 2y
@@ -26,7 +26,7 @@ signing key stored as GitHub secrets.
    gpg --export-secret-keys --armor <KEY_ID>      # the value of SIGNING_KEY
    ```
 
-5. **Add the secrets** to a GitHub environment named `maven-central` (Settings, Environments), ideally
+4. **Add the secrets** to a GitHub environment named `maven-central` (Settings, Environments), ideally
    with required reviewers so a tag alone cannot publish:
 
    | Secret | Value |

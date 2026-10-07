@@ -16,6 +16,7 @@ import dev.docuconf.kotlin.core.DeclarationException
 import dev.docuconf.kotlin.core.JsonSchemaValidator
 import dev.docuconf.kotlin.core.JsonValue
 import dev.docuconf.kotlin.core.ListEncoding
+import dev.docuconf.kotlin.core.ListItems
 import dev.docuconf.kotlin.core.OverlaySpec
 import dev.docuconf.kotlin.core.ValueChecks
 import dev.docuconf.kotlin.core.VarType
@@ -124,7 +125,12 @@ internal object Overlays {
             VarType.LIST -> when (node) {
                 is ArrayNode -> {
                     spec = spec.copy(listEncoding = ListEncoding.JSON)
-                    JsonValue.Arr(node.elements.map { toJson(it) }).toString()
+                    // Hoplite's YAML parser reads every scalar as a string, so an int item can arrive as
+                    // "5"; write integer-looking strings as JSON numbers so the int checks see them.
+                    node.elements.joinToString(",", "[", "]") { e ->
+                        val text = (e as? StringNode)?.value
+                        if (spec.items == ListItems.INT && text != null && integerText.matches(text)) text else toJson(e).toString()
+                    }
                 }
                 is StringNode -> node.value
                 else -> return bad(kind(node))
@@ -148,6 +154,8 @@ internal object Overlays {
         if (raw.isEmpty() && v.spec.type != VarType.STRING) return bad("empty")
         return ValueChecks.check(spec, raw, options).map { it.copy(message = "${it.message} $where") }
     }
+
+    private val integerText = Regex("^-?(0|[1-9][0-9]*)$")
 
     private fun kind(n: Node) = when (n) {
         is MapNode -> "a map"

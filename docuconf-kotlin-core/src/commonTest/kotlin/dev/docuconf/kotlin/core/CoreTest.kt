@@ -90,7 +90,7 @@ class ValueChecksTest {
         val port = VarSpec("PORT", VarType.INT, "Listen port", min = JsonValue.Int(1), max = JsonValue.Int(65535))
         assertEquals(listOf(Codes.INVALID_TYPE), codes(port, "80a"))
         assertEquals(listOf(Codes.INVALID_TYPE), codes(port, "1.0"))
-        assertEquals(listOf(Codes.INVALID_TYPE), codes(port, "99999999999999999999"))
+        assertEquals(listOf(Codes.OUT_OF_RANGE), codes(port, "99999999999999999999"), "an integer beyond 64 bits is out_of_range (SPEC §5)")
         assertEquals(listOf(Codes.OUT_OF_RANGE), codes(port, "70000"))
         assertEquals(emptyList(), codes(port, "8080"))
         val ratio = VarSpec("RATIO", VarType.FLOAT, "A ratio")

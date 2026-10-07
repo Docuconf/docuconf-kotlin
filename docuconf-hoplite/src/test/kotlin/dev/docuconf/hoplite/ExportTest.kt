@@ -89,6 +89,34 @@ class ExportTest {
     }
 
     @Test
+    fun intListItemsExportTheirRange(@TempDir dir: Path) {
+        data class Lists(
+            @Doc("Shard ids this instance owns") val shards: List<Int> = emptyList(),
+            @Doc("Offsets as 64-bit integers") val offsets: List<Long> = emptyList(),
+            @Doc("Bounded shard ids") @ItemMin(0) @ItemMax(1023) val bounded: List<Int> = listOf(1),
+            @Doc("Wider than Int holds") @ItemMin(-5_000_000_000) val wide: Set<Int> = emptySet(),
+            @Doc("Bounded offsets") @ItemMax(10) val small: List<Long> = emptyList(),
+        )
+        val c = Docuconf.contract(Lists::class, "svc")
+        assertEquals(Int.MIN_VALUE.toLong() to Int.MAX_VALUE.toLong(), c.variable("SHARDS")!!.let { it.itemMin to it.itemMax })
+        assertEquals(null to null, c.variable("OFFSETS")!!.let { it.itemMin to it.itemMax }, "Long is 64-bit: no implicit bounds")
+        assertEquals(0L to 1023L, c.variable("BOUNDED")!!.let { it.itemMin to it.itemMax })
+        assertEquals(Int.MIN_VALUE.toLong() to Int.MAX_VALUE.toLong(), c.variable("WIDE")!!.let { it.itemMin to it.itemMax }, "narrowed to Int")
+        assertEquals(null to 10L, c.variable("SMALL")!!.let { it.itemMin to it.itemMax })
+
+        val cue = Docuconf.exportCue(Lists::class, "svc")
+        assertContains(cue, "itemMin: 0\n\t\t\titemMax: 1023")
+        val (exit, out) = Cue.run(Cue.module(dir, cue), dir, "vet", "-c", "./svc")
+        assertEquals(0, exit, "cue vet -c failed:\n$out")
+
+        data class NotInts(@Doc("Names of things") @ItemMin(0) val names: List<String> = emptyList())
+        assertContains(assertFailsWith<DeclarationException> { Docuconf.contract(NotInts::class, "svc") }.message!!, "@ItemMin")
+
+        data class BadDefault(@Doc("Bounded shard ids") @ItemMax(10) val shards: List<Int> = listOf(11))
+        assertContains(assertFailsWith<DeclarationException> { Docuconf.contract(BadDefault::class, "svc") }.message!!, "itemMax")
+    }
+
+    @Test
     fun warnsAboutFeatureFlags() {
         data class Flags(val enable: Enable = Enable())
         val warnings = ArrayList<String>()

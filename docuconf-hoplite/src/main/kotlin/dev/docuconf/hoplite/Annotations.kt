@@ -103,6 +103,22 @@ public annotation class OneOf(vararg val value: String)
 public annotation class Items(val min: Int = -1, val max: Int = -1)
 
 /**
+ * Lower bound of every item of a `List<Int>` or `List<Long>` (exported as `itemMin`). A `List<Int>`
+ * is bounded by Int's range without it.
+ */
+@Target(AnnotationTarget.VALUE_PARAMETER)
+@Retention(AnnotationRetention.RUNTIME)
+public annotation class ItemMin(val value: Long)
+
+/**
+ * Upper bound of every item of a `List<Int>` or `List<Long>` (exported as `itemMax`). A `List<Int>`
+ * is bounded by Int's range without it.
+ */
+@Target(AnnotationTarget.VALUE_PARAMETER)
+@Retention(AnnotationRetention.RUNTIME)
+public annotation class ItemMax(val value: Long)
+
+/**
  * Declares a file input. Goes on a parameter of type [ConfigFile], [TlsKeyPair], [CaBundle],
  * [Keystore], [TextFile] or [BinaryFile]. A non-null parameter without a default is required.
  *

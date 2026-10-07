@@ -13,8 +13,7 @@ file inputs). From that one class it
 Target: server-side Kotlin on the JVM (Ktor, http4k, Spring-less services) running on Kubernetes.
 See [Mobile](#mobile-android-and-ios) for how the code is laid out for Android and iOS later.
 
-Status: v0.1, `apiVersion: docuconf.dev/v1alpha1`. **Licence: pending.** There is no LICENSE file
-yet, and none is granted until one is added.
+Status: v0.1, `apiVersion: docuconf.dev/v1alpha1`. Licence: [MIT](LICENSE).
 
 | Artifact | What it is |
 |---|---|
@@ -207,7 +206,7 @@ Two properties that map to the same name are a declaration error.
 | `java.time.Duration`, `kotlin.time.Duration` | `duration`, `encoding: "iso8601"` | `PT1M30S` |
 | `java.net.URI`, `java.net.URL`, `String` + `@Url`/`@Schemes` | `url` | as is |
 | `enum class`, `String` + `@OneOf` | `enum` | the constant name |
-| `List<String>`, `List<Int>`, `List<Long>`, `Set<…>` | `list`, `encoding: "csv"` | `a,b` |
+| `List<String>`, `List<Int>`, `List<Long>`, `Set<…>` | `list`, `encoding: "csv"` (`List<Int>` exports Int's range as `itemMin`/`itemMax`) | `a,b` |
 | `Json<T>` | `json`, `schema` generated from `T` | compact JSON |
 | a data class | nested variables | |
 
@@ -236,6 +235,7 @@ All go on primary-constructor parameters.
 | `@Url`, `@Schemes("postgres", ...)` | URL variable, allowed schemes. |
 | `@OneOf("a", "b")` | A `String` restricted to values (an `enum class` needs nothing). |
 | `@Items(min, max)` | List length. |
+| `@ItemMin(n)`, `@ItemMax(n)` | Bounds on every item of a `List<Int>` or `List<Long>` (`itemMin`/`itemMax`). An item outside them is `out_of_range` at boot. A `List<Int>` gets Int's range without them, and a declared bound wider than Int is narrowed to it, so the platform never sends an item the app cannot hold. |
 | `@Group`, `@Examples`, `@DeprecatedInput(message, replacedBy)` | Docs metadata. Deprecated inputs log a warning at boot when set. |
 | `@NotInContract` | Leave a parameter out, e.g. a value Hoplite reads from Vault or AWS Secrets Manager (SPEC §4.4). |
 | `@FileInput(name, path, pathEnv, maxSize, secret)` | Declares a file input on a file-typed parameter. |
@@ -393,6 +393,48 @@ val config = Docuconf.load<GatewayConfig> { baseSources = listOf("/application.y
   without docuconf's checks, so docuconf does not claim it. With `restart`, the platform renders an
   immutable ConfigMap and a change rolls the pods.
 
+## Contract-first mode
+
+For a contract written by hand in CUE (or one exported by another SDK), `ContractFirst` in
+`docuconf-kotlin-core` validates an environment against it with no Kotlin declaration, and returns
+typed values (SPEC §11.2 item 11). Export the contract as JSON with `cue export contract.cue --out json`:
+
+```kotlin
+val contract = ContractFirst.parse(File("contract.json").readText())
+val values = ContractFirst.load(contract, System.getenv())   // throws ConfigViolationException
+val port: Long? = values.long("PORT")
+val timeout: kotlin.time.Duration? = values.duration("TIMEOUT")
+```
+
+- `ContractFirst.check(contract, env)` returns `Result.Success` or `Result.Failure` with every
+  violation, with the same codes and secret redaction as boot validation.
+- It parses every SPEC §5 encoding: lists as `csv` (with `separator`), `json` or `indexed`
+  (`NAME__0`, `NAME__1`, ...), durations as `go`, `iso8601`, `seconds` or `timespan`
+  (`[d.]hh:mm:ss[.fffffff]`). Values are never trimmed, and booleans are `true` or `false` in any case.
+- Values are checked by `ValueChecks`, the code that checks a declared Hoplite class at boot, so the
+  conformance suite tests the real checks. The contract itself goes through `DeclarationChecks`.
+- Typed accessors: `string`, `long`, `double`, `boolean`, `duration`, `stringList`, `longList`,
+  `json`, or `values[name]`. Absent optional variables are null; defaults come from the contract.
+  `toJson()` gives every value as JSON, with durations in canonical Go form.
+- It covers variables. File inputs and overlays in the contract are not read or checked.
+
+## Conformance
+
+`ConformanceTest` (in `docuconf-kotlin-core`'s JVM tests) runs docuconf-go's shared suite,
+`conformance/cases.json` (SPEC §12), through the contract-first mode. Each case is its own JUnit test
+named by its `id`, so a failure points at its YAML source.
+
+```
+DOCUCONF_CONFORMANCE=../docuconf-go/conformance/cases.json DOCUCONF_REQUIRE_CONFORMANCE=1 \
+  ./gradlew :docuconf-kotlin-core:jvmTest
+```
+
+- `DOCUCONF_CONFORMANCE` is the path to `cases.json`; without it the runner looks for
+  `../docuconf-go/conformance/cases.json` next to this repository.
+- A missing file skips the suite, unless `DOCUCONF_REQUIRE_CONFORMANCE=1`, as in CI, where it fails.
+- **Skipped tags: none.** `int64` is supported (Kotlin `Long` holds every 64-bit integer) and so is
+  `json-schema` (`JsonSchemaValidator` checks `json` values against their schema).
+
 ## Mobile (Android and iOS)
 
 Android and iOS apps do not get per-environment configuration from Kubernetes: their configuration
@@ -420,16 +462,17 @@ The contract format may need a build-time variant for this (SPEC §13, open ques
 - `reload: watch` (file watching); file inputs and overlays are read once, and overlays declared
   `watch` are rejected.
 - Profiles (`profiles` in the contract) from per-environment files.
-- `indexed` and `json` list encodings (Hoplite reads lists as `csv`, or as `NAME_0`, `NAME_1`
-  variables, which do not match the spec's `NAME__0` form).
-- The contract-first mode (loading a `contract.cue` at runtime) and the shared conformance suite.
+- `indexed` and `json` list encodings for declared config classes (Hoplite reads lists as `csv`, or
+  as `NAME_0`, `NAME_1` variables, which do not match the spec's `NAME__0` form). The contract-first
+  mode parses all three.
 - `@ConfigAlias` names are not exported (a warning says so).
 - Reading a `deprecated.replacedBy` variable's old name as a fallback.
 
 ## Development
 
 ```
-./gradlew check            # unit tests; the export test also runs `cue vet -c` when cue is installed
+./gradlew check            # unit tests; the export test also runs `cue vet -c` when cue is installed,
+                           # and the conformance suite runs when it finds cases.json (see Conformance)
 UPDATE_GOLDEN=1 ./gradlew :docuconf-hoplite:test --tests '*ExportTest*'   # refresh the golden contract
 ```
 
@@ -442,4 +485,4 @@ Releases: see [RELEASING.md](RELEASING.md).
 
 ## Licence
 
-Pending. No licence file is included yet.
+[MIT](LICENSE).

@@ -44,6 +44,8 @@ public object DeclarationChecks {
             v.pattern?.let { pat -> Re2.unsupportedFeature(pat)?.let { errors += "$p pattern uses $it, which RE2 does not support" } }
             if (v.minLength != null && v.maxLength != null && v.minLength > v.maxLength) errors += "$p minLength is greater than maxLength"
             if (v.minItems != null && v.maxItems != null && v.minItems > v.maxItems) errors += "$p minItems is greater than maxItems"
+            if ((v.itemMin != null || v.itemMax != null) && (v.type != VarType.LIST || v.items != ListItems.INT)) errors += "$p itemMin and itemMax only apply to lists of int"
+            if (v.itemMin != null && v.itemMax != null && v.itemMin > v.itemMax) errors += "$p itemMin is greater than itemMax"
             if (v.min != null && v.max != null && v.min.asDouble() > v.max.asDouble()) errors += "$p min is greater than max"
             for (d in listOfNotNull(v.minDuration, v.maxDuration)) {
                 if (!Durations.isGo(d)) errors += "$p \"$d\" is not a Go duration such as 30s or 1h30m"

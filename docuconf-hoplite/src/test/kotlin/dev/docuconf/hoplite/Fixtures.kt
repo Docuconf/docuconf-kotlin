@@ -53,7 +53,7 @@ data class GatewayConfig(
     @Doc("How long idle upstream connections are kept") val idle: kotlin.time.Duration = 90.seconds,
     @Doc("Public base URL of the gateway") @Schemes("https") val publicUrl: URI,
     @Doc("Kafka brokers to publish access logs to") @Items(min = 1) @Examples("kafka-0:9092") val brokers: List<String> = listOf("kafka-0:9092", "kafka-1:9092"),
-    @Doc("Extra ports that serve the admin API") @Items(max = 4) val adminPorts: List<Int> = emptyList(),
+    @Doc("Extra ports that serve the admin API") @Items(max = 4) @ItemMin(1) @ItemMax(65535) val adminPorts: List<Int> = emptyList(),
     @Doc("Default per-client rate limits") val rateLimits: Json<RateLimits>? = null,
     @Doc("Cloud region code") @Pattern("^[a-z]{2}-[a-z]+-[0-9]$") @Length(max = 20) @Group("cloud") val region: String = "eu-west-1",
     @Doc("Billing tier of this deployment") @OneOf("free", "pro") val tier: String = "free",

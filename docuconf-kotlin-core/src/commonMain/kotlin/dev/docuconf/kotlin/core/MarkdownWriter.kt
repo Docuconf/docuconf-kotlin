@@ -50,6 +50,8 @@ public object MarkdownWriter {
         v.values?.let { "one of ${it.joinToString(", ")}" },
         v.minItems?.let { "minItems $it" },
         v.maxItems?.let { "maxItems $it" },
+        v.itemMin?.let { "itemMin $it" },
+        v.itemMax?.let { "itemMax $it" },
     ).joinToString("; ")
 
     private fun cell(s: String): String = s.replace("|", "\\|").replace("\n", " ")

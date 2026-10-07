@@ -79,6 +79,8 @@ public object CueWriter {
         v.pattern?.let { w.field("pattern", str(it)) }
         v.minItems?.let { w.field("minItems", it.toString()) }
         v.maxItems?.let { w.field("maxItems", it.toString()) }
+        v.itemMin?.let { w.field("itemMin", it.toString()) }
+        v.itemMax?.let { w.field("itemMax", it.toString()) }
         v.schema?.let { w.field("schema", value(it, w.depth)) }
         v.default?.let { w.field("default", value(if (v.type == VarType.FLOAT && it is JsonValue.Int) JsonValue.Float(it.value.toDouble()) else it, w.depth)) }
         w.close()
