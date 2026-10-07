@@ -4,6 +4,15 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
+    inputs:
+      docuconf_go_ref:
+        description: docuconf-go ref to test against (empty = .github/docuconf-go.ref)
+        required: false
+        default: ""
+  # Nightly against docuconf-go main, to catch spec changes before a bump PR.
+  schedule:
+    - cron: "23 5 * * *"
 
 permissions:
   contents: read
@@ -18,10 +27,21 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       # The meta-schema the export test vets contracts against, and the conformance cases.
-      - uses: actions/checkout@v4
+      - name: Pick the docuconf-go ref
+        id: dcref
+        env:
+          EVENT: ${{ github.event_name }}
+          INPUT_REF: ${{ inputs.docuconf_go_ref }}
+        run: |
+          if [ "$EVENT" = schedule ]; then echo "ref=main" >> "$GITHUB_OUTPUT"
+          elif [ -n "$INPUT_REF" ]; then echo "ref=$INPUT_REF" >> "$GITHUB_OUTPUT"
+          else echo "ref=$(tr -d '[:space:]' < .github/docuconf-go.ref)" >> "$GITHUB_OUTPUT"; fi
+      - name: Check out docuconf-go
+        uses: actions/checkout@v4
         with:
           repository: docuconf/docuconf-go
           path: docuconf-go
+          ref: ${{ steps.dcref.outputs.ref }}
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -32,6 +52,12 @@ jobs:
           cache: false
       - run: go install cuelang.org/go/cmd/cue@v0.17.1
       - uses: gradle/actions/setup-gradle@v4
+      # The docuconf-go-facing subset (conformance suite, cue vet of exported
+      # contracts); docuconf-go's downstream workflow runs the same script.
+      - name: Run scripts/conformance.sh
+        run: scripts/conformance.sh
+        env:
+          DOCUCONF_GO_DIR: ${{ github.workspace }}/docuconf-go
       # Checks every module, the Gradle plugin and the README (ReadmeTest), then publishes the
       # -SNAPSHOT to the runner's ~/.m2 as the README's Install section describes.
       - run: |
@@ -55,10 +81,21 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/checkout@v4
+      - name: Pick the docuconf-go ref
+        id: dcref
+        env:
+          EVENT: ${{ github.event_name }}
+          INPUT_REF: ${{ inputs.docuconf_go_ref }}
+        run: |
+          if [ "$EVENT" = schedule ]; then echo "ref=main" >> "$GITHUB_OUTPUT"
+          elif [ -n "$INPUT_REF" ]; then echo "ref=$INPUT_REF" >> "$GITHUB_OUTPUT"
+          else echo "ref=$(tr -d '[:space:]' < .github/docuconf-go.ref)" >> "$GITHUB_OUTPUT"; fi
+      - name: Check out docuconf-go
+        uses: actions/checkout@v4
         with:
           repository: docuconf/docuconf-go
           path: docuconf-go
+          ref: ${{ steps.dcref.outputs.ref }}
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
