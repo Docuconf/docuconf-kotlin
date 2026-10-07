@@ -232,11 +232,12 @@ All go on primary-constructor parameters.
 | `@Doc("...")` | Description, at least 5 characters. **Required** on every variable and file input (KDoc is not available at runtime). |
 | `@Min`, `@Max` / `@DecimalMin`, `@DecimalMax` | Integer / float bounds. |
 | `@DurationMin("1s")`, `@DurationMax("5m")` | Duration bounds in Go syntax. |
-| `@Length(min, max)` | String or text-file length in characters (code points). |
+| `@Length(min, max)` | String or text-file length in characters (code points). On a `url` or `Json<T>` variable only `max` applies (`maxLength`): a url is measured as it is, a json value as received, whitespace included, before it is parsed (as compact JSON when it comes from an overlay as nested keys). |
 | `@Pattern("re")` | RE2 pattern, matched **anywhere** in the value (anchor with `^`/`$`). Lookaround, backreferences and other non-RE2 features are rejected at declaration time. |
 | `@Url`, `@Schemes("postgres", ...)` | URL variable, allowed schemes. |
 | `@OneOf("a", "b")` | A `String` restricted to values (an `enum class` needs nothing). |
 | `@Items(min, max)` | List length. |
+| `@ItemLength(min, max)` | Length in characters of every item of a `List<String>` (`itemMinLength`/`itemMaxLength`), checked after splitting, so the separator is never counted. On a `List<Int>` it is a declaration error. |
 | `@ItemMin(n)`, `@ItemMax(n)` | Bounds on every item of a `List<Int>` or `List<Long>` (`itemMin`/`itemMax`). An item outside them is `out_of_range` at boot. A `List<Int>` gets Int's range without them, and a declared bound wider than Int is narrowed to it, so the platform never sends an item the app cannot hold. |
 | `@Group`, `@Examples`, `@DeprecatedInput(message, replacedBy)` | Docs metadata. Deprecated inputs log a warning at boot when set. |
 | `@NotInContract` | Leave a parameter out, e.g. a value Hoplite reads from Vault or AWS Secrets Manager (SPEC §4.4). |
@@ -245,6 +246,10 @@ All go on primary-constructor parameters.
 | `@Tls(dnsNames, keyAlgorithms, minRemaining, requireCA)` | TLS key pair constraints. |
 | `@MinCertificates(n)` | Least certificates in a CA bundle. |
 | `@KeystoreSpec(format, passwordVar)` | Keystore format and the (secret) variable holding its password. |
+
+Lengths count characters, meaning Unicode code points (`codePointCount`), never bytes or UTF-16 units
+(SPEC §4.3): `日本` is 2, `ZÜ01` fits `@ItemLength(max = 4)`, and an emoji is 1 although Kotlin's `String.length`
+says 2. A value above a limit is `out_of_range` at boot; a too-long secret reports its length, never its value.
 
 Required, optional and defaults come from Kotlin itself: a non-null parameter without a default is
 `required`; a default value is exported as `default`; a nullable parameter without a default is

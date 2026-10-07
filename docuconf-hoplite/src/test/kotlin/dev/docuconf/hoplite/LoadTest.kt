@@ -296,4 +296,24 @@ class LoadTest {
         val r = World(root).check()
         assertIs<LoadResult.Success<GatewayConfig>>(r)
     }
+
+    @Test
+    fun lengthLimitsAtBoot(@TempDir dir: Path) {
+        data class Limits(val max: Int)
+        data class Batch(
+            @Doc("Where to report each run") @Length(max = 24) val callback: URI? = null,
+            @Doc("Run limits as a JSON object") @Length(max = 16) val limits: Json<Limits>? = null,
+            @Doc("Branch codes, two to four characters each") @ItemLength(min = 2, max = 4) val branches: List<String> = emptyList(),
+            @Doc("Database URL") @Url @Length(max = 30) val dbUrl: com.sksamuel.hoplite.Secret? = null,
+        )
+        fun check(env: Map<String, String>) = Docuconf.check(Batch::class, DocuconfOptions().apply { this.env = env; terminationLog = dir.resolve("termination-log").toString() })
+        val ok = check(mapOf("BRANCHES" to "ZÜ01,日本,\uD83D\uDE80\uD83D\uDE80", "LIMITS" to "{\"max\":12345678}", "CALLBACK" to "https://例え.jp/日本語の道/一二三四"))
+        assertIs<LoadResult.Success<Batch>>(ok, ok.toString())
+        assertEquals(listOf("ZÜ01", "日本", "\uD83D\uDE80\uD83D\uDE80"), ok.value.branches)
+        val bad = check(mapOf("BRANCHES" to "BE,ZÜRICH", "LIMITS" to "{ \"max\": 123456 }", "CALLBACK" to "https://a.example/runs/42", "DBURL" to "postgres://app:s3cr3t@db:5432/app"))
+        assertIs<LoadResult.Failure>(bad)
+        assertEquals(listOf("BRANCHES", "CALLBACK", "DBURL", "LIMITS"), bad.violations.map { it.input }.sorted())
+        assertTrue(bad.violations.all { it.code == Codes.OUT_OF_RANGE }, bad.violations.toString())
+        assertFalse(bad.violations.toString().contains("s3cr3t"))
+    }
 }

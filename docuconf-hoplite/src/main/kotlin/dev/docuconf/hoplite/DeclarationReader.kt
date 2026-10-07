@@ -212,6 +212,11 @@ internal object DeclarationReader {
             if ((itemMin != null || itemMax != null) && listItems != ListItems.INT) {
                 errors += "${where(path)}: @ItemMin and @ItemMax only apply to List<Int> or List<Long>"
             }
+            val itemLength = a.filterIsInstance<ItemLength>().firstOrNull()
+            if (itemLength != null && listItems != ListItems.STRING) {
+                errors += "${where(path)}: @ItemLength only applies to List<String>"
+            }
+            val stringItems = itemLength?.takeIf { listItems == ListItems.STRING }
             val intItems = type == VarType.LIST && itemClass == Int::class
             val rawDefault = defaults[p.name]
             val default = if (p.isOptional && rawDefault != null) {
@@ -262,6 +267,8 @@ internal object DeclarationReader {
                     maxItems = items?.max?.takeIf { it >= 0 },
                     itemMin = if (intItems) maxOf(itemMin ?: Long.MIN_VALUE, Int.MIN_VALUE.toLong()) else itemMin,
                     itemMax = if (intItems) minOf(itemMax ?: Long.MAX_VALUE, Int.MAX_VALUE.toLong()) else itemMax,
+                    itemMinLength = stringItems?.min?.takeIf { it >= 0 },
+                    itemMaxLength = stringItems?.max?.takeIf { it >= 0 },
                     schema = schema,
                 ),
                 path,

@@ -69,7 +69,12 @@ public annotation class DurationMin(val value: String)
 @Retention(AnnotationRetention.RUNTIME)
 public annotation class DurationMax(val value: String)
 
-/** Length bounds in characters (Unicode code points) for a string variable or text file. -1 means no bound. */
+/**
+ * Length bounds in characters (Unicode code points, never bytes or UTF-16 units) for a string variable
+ * or text file. On a `url` or [Json] variable only [max] applies (exported as `maxLength`): a url is
+ * measured as it is, a json value as received, whitespace included, before it is parsed. -1 means no
+ * bound.
+ */
 @Target(AnnotationTarget.VALUE_PARAMETER)
 @Retention(AnnotationRetention.RUNTIME)
 public annotation class Length(val min: Int = -1, val max: Int = -1)
@@ -117,6 +122,15 @@ public annotation class ItemMin(val value: Long)
 @Target(AnnotationTarget.VALUE_PARAMETER)
 @Retention(AnnotationRetention.RUNTIME)
 public annotation class ItemMax(val value: Long)
+
+/**
+ * Length bounds in characters (Unicode code points) of every item of a `List<String>` (exported as
+ * `itemMinLength`/`itemMaxLength`), checked after the list is split, so the separator is never
+ * counted. An item outside them is `out_of_range` at boot. -1 means no bound.
+ */
+@Target(AnnotationTarget.VALUE_PARAMETER)
+@Retention(AnnotationRetention.RUNTIME)
+public annotation class ItemLength(val min: Int = -1, val max: Int = -1)
 
 /**
  * Declares a file input. Goes on a parameter of type [ConfigFile], [TlsKeyPair], [CaBundle],
