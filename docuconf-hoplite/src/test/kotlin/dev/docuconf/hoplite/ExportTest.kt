@@ -3,6 +3,7 @@ package dev.docuconf.hoplite
 import com.sksamuel.hoplite.Secret
 import dev.docuconf.kotlin.core.DeclarationException
 import org.junit.jupiter.api.io.TempDir
+import java.net.URI
 import java.nio.file.Files
 import java.nio.file.Path
 import kotlin.test.Test
@@ -114,6 +115,31 @@ class ExportTest {
 
         data class BadDefault(@Doc("Bounded shard ids") @ItemMax(10) val shards: List<Int> = listOf(11))
         assertContains(assertFailsWith<DeclarationException> { Docuconf.contract(BadDefault::class, "svc") }.message!!, "itemMax")
+    }
+
+    @Test
+    fun lengthLimitsAreExported(@TempDir dir: Path) {
+        data class Limits(val max: Int)
+        data class Batch(
+            @Doc("Where to report each run") @Schemes("https") @Length(max = 24) val callback: URI? = null,
+            @Doc("Run limits as a JSON object") @Length(max = 16) val limits: Json<Limits>? = null,
+            @Doc("Branch codes, two to four characters each") @ItemLength(min = 2, max = 4) val branches: List<String> = listOf("ZÜ01", "BE"),
+        )
+        val c = Docuconf.contract(Batch::class, "svc")
+        assertEquals(24, c.variable("CALLBACK")!!.maxLength)
+        assertEquals(16, c.variable("LIMITS")!!.maxLength)
+        assertEquals(2 to 4, c.variable("BRANCHES")!!.let { it.itemMinLength to it.itemMaxLength })
+        val cue = Docuconf.exportCue(Batch::class, "svc")
+        assertContains(cue, "itemMinLength: 2")
+        val (exit, out) = Cue.run(Cue.module(dir, cue), dir, "vet", "-c", "./svc")
+        assertEquals(0, exit, "cue vet -c failed:\n$out")
+
+        data class IntItems(@Doc("Worker ports") @ItemLength(max = 4) val ports: List<Int> = emptyList())
+        assertContains(assertFailsWith<DeclarationException> { Docuconf.contract(IntItems::class, "svc") }.message!!, "@ItemLength only applies to List<String>")
+        data class MinOnUrl(@Doc("Callback URL") @Length(min = 1) val hook: URI? = null)
+        assertContains(assertFailsWith<DeclarationException> { Docuconf.contract(MinOnUrl::class, "svc") }.message!!, "minLength only applies to strings")
+        data class BadDefault(@Doc("Branch codes") @ItemLength(max = 4) val codes: List<String> = listOf("BE", "ZÜRICH"))
+        assertContains(assertFailsWith<DeclarationException> { Docuconf.contract(BadDefault::class, "svc") }.message!!, "above itemMaxLength 4")
     }
 
     @Test

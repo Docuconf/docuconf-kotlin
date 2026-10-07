@@ -46,6 +46,19 @@ public object DeclarationChecks {
             if (v.minItems != null && v.maxItems != null && v.minItems > v.maxItems) errors += "$p minItems is greater than maxItems"
             if ((v.itemMin != null || v.itemMax != null) && (v.type != VarType.LIST || v.items != ListItems.INT)) errors += "$p itemMin and itemMax only apply to lists of int"
             if (v.itemMin != null && v.itemMax != null && v.itemMin > v.itemMax) errors += "$p itemMin is greater than itemMax"
+            // Lengths count characters (SPEC §4.3): minLength on a string, maxLength on a string, url or
+            // json value, and itemMinLength/itemMaxLength on each item of a string list.
+            if (v.minLength != null && v.type != VarType.STRING) errors += "$p minLength only applies to strings"
+            if (v.maxLength != null && v.type != VarType.STRING && v.type != VarType.URL && v.type != VarType.JSON) {
+                errors += "$p maxLength only applies to strings, urls and json"
+            }
+            for (len in listOfNotNull(v.minLength, v.maxLength, v.itemMinLength, v.itemMaxLength)) {
+                if (len < 0) errors += "$p a length limit cannot be negative (got $len)"
+            }
+            if ((v.itemMinLength != null || v.itemMaxLength != null) && (v.type != VarType.LIST || v.items != ListItems.STRING)) {
+                errors += "$p itemMinLength and itemMaxLength only apply to lists of string"
+            }
+            if (v.itemMinLength != null && v.itemMaxLength != null && v.itemMinLength > v.itemMaxLength) errors += "$p itemMinLength is greater than itemMaxLength"
             if (v.min != null && v.max != null && v.min.asDouble() > v.max.asDouble()) errors += "$p min is greater than max"
             for (d in listOfNotNull(v.minDuration, v.maxDuration)) {
                 if (!Durations.isGo(d)) errors += "$p \"$d\" is not a Go duration such as 30s or 1h30m"
