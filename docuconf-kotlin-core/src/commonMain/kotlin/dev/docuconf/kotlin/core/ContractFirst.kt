@@ -71,7 +71,7 @@ public object ContractFirst {
         val values = LinkedHashMap<String, Any?>()
         for (spec in contract.vars.sortedBy { it.name }) {
             val parsed = if (spec.type == VarType.LIST && spec.listEncoding == ListEncoding.INDEXED) {
-                ValueChecks.parse(spec, null, items = ValueChecks.indexedItems(spec.name, env))
+                ValueChecks.parseIndexed(spec, env)
             } else {
                 ValueChecks.parse(spec, env[spec.name])
             }
