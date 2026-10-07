@@ -67,10 +67,11 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
       - name: Build
         run: ./gradlew :orders:installDist --stacktrace
+      # Ignores metadata.generator.version, which release PRs bump.
       - name: The committed contract matches a fresh export
         run: |
           ./gradlew :orders:exportContract
-          git diff --exit-code -- examples/orders/contract.cue
+          scripts/check-generated.sh examples/orders/contract.cue
       - name: cue vet the contract against the meta-schema
         run: |
           dir="$(mktemp -d)"

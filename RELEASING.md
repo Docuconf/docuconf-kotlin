@@ -45,15 +45,24 @@ place; Central rejects POMs without `<licenses>`.
 
 ## Each release
 
-1. Set `VERSION_NAME` in `gradle.properties` and `Docuconf.VERSION` in
-   `docuconf-hoplite/src/main/kotlin/dev/docuconf/hoplite/Docuconf.kt` to the new version (a test
-   fails if they differ). Update the golden contract (`UPDATE_GOLDEN=1`), since it records the version.
-2. Run `./gradlew check publishToMavenLocal` and try the artifacts from `~/.m2` in a sample app.
-3. Commit, tag and push: `git tag v0.1.0 && git push origin v0.1.0`.
+Releases are automated with [release-please](https://github.com/googleapis/release-please); see
+[CONTRIBUTING.md](CONTRIBUTING.md#how-releases-happen) for the commit conventions it reads.
+
+1. Optionally, check out the open release PR (`chore(main): release X.Y.Z`), run
+   `./gradlew check publishToMavenLocal` and try the artifacts from `~/.m2` in a sample app.
+2. Merge the release PR. It already sets `VERSION_NAME` in `gradle.properties` and `Docuconf.VERSION` in
+   `docuconf-hoplite/src/main/kotlin/dev/docuconf/hoplite/Docuconf.kt` to the new version, and updates
+   `CHANGELOG.md`. The golden contract and the example contract do not need regenerating: their comparisons ignore
+   `metadata.generator.version`.
+3. release-please tags the merge commit `vX.Y.Z` and creates the GitHub release with the changelog entries.
 4. `.github/workflows/release.yml` checks the tag against `VERSION_NAME`, runs the tests (including
    `cue vet` against `docuconf/docuconf-go`'s meta-schema) and runs `publishToMavenCentral`.
 5. In the Central Portal, open Deployments, check the files and signatures, and press **Publish**. To
    release without this step, change the workflow to `publishAndReleaseToMavenCentral`.
 
+If the release PR was created with `GITHUB_TOKEN` (no release GitHub App configured), the tag does not trigger
+`release.yml` by itself, so `.github/workflows/release-please.yml` starts it with `gh workflow run`.
+
 A deployment that fails validation can be dropped in the Portal (or with
-`./gradlew dropMavenCentralDeployment`) and the tag re-pushed after fixing it.
+`./gradlew dropMavenCentralDeployment`) and the release workflow re-run on the tag after fixing it
+(`gh workflow run release.yml --ref vX.Y.Z`).

@@ -17,6 +17,12 @@ class ExportTest {
 
     private fun export() = Docuconf.exportCue(GatewayConfig::class, "gateway", configure = { warn = {} })
 
+    // metadata.generator.version is Docuconf.VERSION, which every release PR bumps, so comparisons with the
+    // committed golden file ignore its value.
+    private val generatorVersion = Regex("""(generator:\s*\{[^{}]*?\bversion:\s*)"[^"]*"""")
+
+    private fun withoutGeneratorVersion(cue: String) = cue.replace(generatorVersion, "$1\"<generator-version>\"")
+
     @Test
     fun matchesGolden() {
         val cue = export()
@@ -24,7 +30,16 @@ class ExportTest {
             Files.createDirectories(golden.parent)
             Files.writeString(golden, cue)
         }
-        assertEquals(Files.readString(golden), cue, "contract differs from $golden; rerun with UPDATE_GOLDEN=1 if intended")
+        assertEquals(withoutGeneratorVersion(Files.readString(golden)), withoutGeneratorVersion(cue), "contract differs from $golden; rerun with UPDATE_GOLDEN=1 if intended")
+    }
+
+    @Test
+    fun goldenComparisonIgnoresOnlyTheGeneratorVersion() {
+        val cue = export()
+        val bumped = cue.replaceFirst("\"${Docuconf.VERSION}\"", "\"99.0.0\"")
+        assertTrue(bumped != cue)
+        assertEquals(withoutGeneratorVersion(cue), withoutGeneratorVersion(bumped))
+        assertTrue(withoutGeneratorVersion(cue.replace("docuconf-hoplite", "other")) != withoutGeneratorVersion(cue))
     }
 
     @Test
@@ -154,7 +169,7 @@ class ExportTest {
         val out = dir.resolve("contract.cue")
         val md = dir.resolve("CONFIG.md")
         main(arrayOf("--class", GatewayConfig::class.java.name, "--service", "gateway", "--out", out.toString(), "--markdown", md.toString()))
-        assertEquals(Files.readString(golden), Files.readString(out))
+        assertEquals(withoutGeneratorVersion(Files.readString(golden)), withoutGeneratorVersion(Files.readString(out)))
         assertContains(Files.readString(md), "# gateway configuration")
     }
 }

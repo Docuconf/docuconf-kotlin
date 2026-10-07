@@ -106,7 +106,7 @@ public sealed class LoadResult<out T : Any> {
  */
 public object Docuconf {
     /** This library's version, recorded in `metadata.generator`. */
-    public const val VERSION: String = "0.1.0"
+    public const val VERSION: String = "0.1.0" // x-release-please-version
 
     /** The SDK name recorded in `metadata.generator`. */
     public const val SDK: String = "docuconf-hoplite"
