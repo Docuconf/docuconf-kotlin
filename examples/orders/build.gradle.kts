@@ -3,6 +3,7 @@ import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 plugins {
     alias(libs.plugins.kotlin.jvm)
     application
+    id("dev.docuconf")
 }
 
 java {
@@ -23,12 +24,8 @@ application {
     mainClass.set("dev.docuconf.examples.orders.MainKt")
 }
 
-// Writes contract.cue with the SDK's export command (Docuconf.exportCue). CI re-runs it and fails
-// when the committed file differs.
-val exportContract by tasks.registering(JavaExec::class) {
-    group = "docuconf"
-    description = "Exports the orders contract to contract.cue."
-    classpath = sourceSets.main.get().runtimeClasspath
-    mainClass.set("dev.docuconf.hoplite.Export")
-    args("--class", "dev.docuconf.examples.orders.OrdersConfig", "--service", "orders", "--out", file("contract.cue").path)
+// docuconfExport rewrites contract.cue; docuconfCheck (part of `check`) fails with a diff when the
+// committed file differs from a fresh export. The service name comes from @DocuconfService.
+docuconf {
+    configClass.set("dev.docuconf.examples.orders.OrdersConfig")
 }

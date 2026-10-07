@@ -18,11 +18,14 @@ public object ValueChecks {
      * @property trimListItems whether the host trims whitespace around csv items (Hoplite does).
      * @property hostDuration an extra duration parser for forms the host also accepts (Hoplite's `30s`).
      * @property lenientBools other strings the host accepts as booleans (Hoplite: t, f, 1, 0, yes, no).
+     * @property durationHint the forms named when a duration does not parse, when the host accepts more
+     *   than the encoding (`an ISO 8601 duration like PT30S, or Go syntax like 30s`).
      */
     public data class Options(
         val trimListItems: Boolean = false,
         val hostDuration: ((String) -> Long?)? = null,
         val lenientBools: Set<String> = emptySet(),
+        val durationHint: String? = null,
     )
 
     /** Whether a raw value counts as unset: absent, or empty for any type except string (SPEC §5). */
@@ -202,17 +205,18 @@ public object ValueChecks {
         fun checkDuration(): Long? {
             val nanos = parseDuration(raw, spec.durationEncoding, options.hostDuration)
             if (nanos == null) {
-                val example = when (spec.durationEncoding) {
-                    DurationEncoding.GO -> "1m30s"
-                    DurationEncoding.ISO8601 -> "PT1M30S"
-                    DurationEncoding.SECONDS -> "90"
-                    DurationEncoding.TIMESPAN -> "00:01:30"
+                val expected = options.durationHint ?: when (spec.durationEncoding) {
+                    DurationEncoding.GO -> "a Go duration like 1m30s"
+                    DurationEncoding.ISO8601 -> "an ISO 8601 duration like PT30S"
+                    DurationEncoding.SECONDS -> "a number of seconds like 90"
+                    DurationEncoding.TIMESPAN -> "a timespan like 00:01:30"
                 }
-                add(Codes.INVALID_TYPE, "$shown is not a duration such as $example")
+                add(Codes.INVALID_TYPE, "$shown is not a duration; expected $expected")
                 return null
             }
-            spec.minDuration?.let { if (nanos < Durations.parseGo(it)!!) add(Codes.OUT_OF_RANGE, "$shown is shorter than min $it") }
-            spec.maxDuration?.let { if (nanos > Durations.parseGo(it)!!) add(Codes.OUT_OF_RANGE, "$shown is longer than max $it") }
+            // Bounds that are not Go syntax are a declaration error, reported by DeclarationChecks.
+            spec.minDuration?.let { b -> Durations.parseGo(b)?.let { if (nanos < it) add(Codes.OUT_OF_RANGE, "$shown is shorter than min $b") } }
+            spec.maxDuration?.let { b -> Durations.parseGo(b)?.let { if (nanos > it) add(Codes.OUT_OF_RANGE, "$shown is longer than max $b") } }
             return nanos
         }
 

@@ -30,7 +30,7 @@ class ExportTest {
 
     @Test
     fun versionMatchesBuild() {
-        assertEquals(System.getProperty("docuconf.version"), Docuconf.VERSION)
+        assertEquals(System.getProperty("docuconf.version").removeSuffix("-SNAPSHOT"), Docuconf.VERSION)
     }
 
     @Test
@@ -42,8 +42,8 @@ class ExportTest {
     fun namesFollowHopliteEnvironmentSource() {
         val names = Docuconf.contract(GatewayConfig::class, "gateway") { warn = {} }.vars.map { it.name }.toSet()
         // Nesting is "_"; within one level Hoplite drops "_" and "-" and ignores case.
-        assertTrue("PUBLICURL" in names, names.toString())
-        assertTrue("DB_POOLSIZE" in names, names.toString())
+        assertTrue("PUBLIC_URL" in names, names.toString())
+        assertTrue("DB_POOL_SIZE" in names, names.toString())
         assertTrue("POD_NAMESPACE" in names, names.toString())
         assertTrue("PARTNER_PASSWORD" in names, names.toString())
         assertTrue("VAULTTOKEN" !in names, "@NotInContract parameters stay out")
@@ -80,7 +80,7 @@ class ExportTest {
         assertContains(assertFailsWith<DeclarationException> { Docuconf.contract(ShortDoc::class, "svc") }.message!!, "at least 5")
 
         data class Clash(@Doc("Listen port") val httpPort: Int = 1, @Doc("Same name") val http_port: Int = 2)
-        assertContains(assertFailsWith<DeclarationException> { Docuconf.contract(Clash::class, "svc") }.message!!, "more than once")
+        assertContains(assertFailsWith<DeclarationException> { Docuconf.contract(Clash::class, "svc") }.message!!, "Clash.httpPort and Clash.http_port all read HTTP_PORT")
 
         data class Watch(
             @Doc("Licence key") @FileInput(name = "license", path = "/etc/svc/license.key") val license: TextFile,
@@ -156,7 +156,7 @@ class ExportTest {
         Files.writeString(base, "port: 9000\ndb:\n  poolSize: 20\n")
         val c = Docuconf.contract(GatewayConfig::class, "gateway") { baseSources = listOf(base.toString()); warn = {} }
         assertEquals("9000", c.variable("PORT")!!.default.toString())
-        assertEquals("20", c.variable("DB_POOLSIZE")!!.default.toString())
+        assertEquals("20", c.variable("DB_POOL_SIZE")!!.default.toString())
     }
 
     @Test
@@ -179,7 +179,7 @@ class ExportTest {
     fun commandLineExport(@TempDir dir: Path) {
         val out = dir.resolve("contract.cue")
         val md = dir.resolve("CONFIG.md")
-        main(arrayOf("--class", GatewayConfig::class.java.name, "--service", "gateway", "--out", out.toString(), "--markdown", md.toString()))
+        assertEquals(0, export(arrayOf("--class", GatewayConfig::class.java.name, "--service", "gateway", "--out", out.toString(), "--markdown", md.toString()), System.out, System.err))
         assertEquals(Files.readString(golden), Files.readString(out))
         assertContains(Files.readString(md), "# gateway configuration")
     }

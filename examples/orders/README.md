@@ -15,11 +15,13 @@ the environment at boot, reporting every problem at once. The server is the JDK'
 | `LOG_LEVEL` | enum | `debug`, `info`, `warn`, `error`; default `info` |
 | `DATABASE_URL` | url | secret, required, scheme `postgres` |
 | `ALLOWED_ORIGINS` | list of strings (csv) | at least 1 item; default `http://localhost:3000` |
-| `REQUEST_TIMEOUT` | duration (ISO-8601, or one number and unit like `30s`) | 1s–5m, default `30s` |
+| `REQUEST_TIMEOUT` | duration (ISO 8601 like `PT30S`, or Go syntax like `1m30s`) | 1s–5m, default `30s` |
 | `WORKER_COUNT` | int | 1–64, default `4` |
 
-Hoplite reads `_` as a nesting level, so `LOG_LEVEL` is the property `log.level`. That is why the
-class nests small data classes instead of a flat `logLevel` (which would read `LOGLEVEL`).
+Each property reads its name in SCREAMING_SNAKE_CASE (`logLevel` reads `LOG_LEVEL`), so the class
+is one flat data class. `LogLevel` has idiomatic constants (`DEBUG`) with lowercase wire values
+(`@WireName("debug")`). Durations are ISO 8601 on the wire (`PT1M30S`, what the platform renders);
+typed by hand, `1m30s` works too.
 
 ## Run it
 
@@ -35,13 +37,14 @@ curl localhost:8080/config
 
 ## A bad start
 
-With `PORT=0` and no `DATABASE_URL`, the app prints every problem and exits with status 1:
+With `PORT=0` and no `DATABASE_URL`, `Docuconf.loadOrExit` prints every problem and exits with
+status 1, with no stack trace:
 
 ```console
 $ PORT=0 examples/orders/build/install/orders/bin/orders
-invalid configuration (2 problems):
-  - PORT: out_of_range: "0" is below min 1
-  - DATABASE_URL: missing_required: required, but not set
+docuconf: 2 configuration problems:
+  PORT: out_of_range: "0" is below min 1
+  DATABASE_URL: missing_required: required, but not set
 ```
 
 On Kubernetes the same text goes to `/dev/termination-log`, so `kubectl describe pod` shows it.
@@ -49,12 +52,13 @@ On Kubernetes the same text goes to `/dev/termination-log`, so `kubectl describe
 ## Export the contract
 
 ```sh
-./gradlew :orders:exportContract
+./gradlew :orders:docuconfExport
 ```
 
-This runs the SDK's export command (`dev.docuconf.hoplite.Export`, which calls
-`Docuconf.exportCue()`) and rewrites `contract.cue`. Commit the result; CI fails when the committed
-file differs from a fresh export.
+The `dev.docuconf` Gradle plugin runs the SDK's export command (`dev.docuconf.hoplite.Export`) and
+rewrites `contract.cue`; the service name comes from `@DocuconfService(name = "orders")`. Commit the
+result. `./gradlew :orders:docuconfCheck` (part of `check`, and run in CI) fails with a diff when the
+committed file differs from a fresh export.
 
 ## Deploy
 

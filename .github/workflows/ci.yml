@@ -58,7 +58,11 @@ jobs:
         run: scripts/conformance.sh
         env:
           DOCUCONF_GO_DIR: ${{ github.workspace }}/docuconf-go
-      - run: ./gradlew check publishToMavenLocal --stacktrace
+      # Checks every module, the Gradle plugin and the README (ReadmeTest), then publishes the
+      # -SNAPSHOT to the runner's ~/.m2 as the README's Install section describes.
+      - run: |
+          ./gradlew check --stacktrace
+          ./gradlew publishToMavenLocal
         env:
           DOCUCONF_SPEC_DIR: ${{ github.workspace }}/docuconf-go/spec/cue
           DOCUCONF_REQUIRE_CUE: "1"
@@ -106,7 +110,8 @@ jobs:
         run: ./gradlew :orders:installDist --stacktrace
       - name: The committed contract matches a fresh export
         run: |
-          ./gradlew :orders:exportContract
+          ./gradlew :orders:docuconfCheck
+          ./gradlew :orders:docuconfExport
           git diff --exit-code -- examples/orders/contract.cue
       - name: cue vet the contract against the meta-schema
         run: |
@@ -117,3 +122,16 @@ jobs:
           cd "$dir" && cue vet -c ./orders
       - name: Smoke test
         run: examples/orders/smoke.sh
+
+  # A first-time user's project (examples/consumer): consumes docuconf from source as the README's
+  # Install section says, and runs the README's steps (export, check, a bad start).
+  consumer:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: gradle/actions/setup-gradle@v4
+      - run: examples/consumer/run.sh

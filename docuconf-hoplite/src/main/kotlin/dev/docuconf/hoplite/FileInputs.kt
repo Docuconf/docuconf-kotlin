@@ -18,6 +18,11 @@ public class ConfigFile<out T : Any> internal constructor(
     public val value: T,
 ) {
     override fun toString(): String = "ConfigFile($path)"
+
+    public companion object {
+        /** A config file holding [value], for tests: build an `AppConfig` without files on disk. */
+        public fun <T : Any> of(value: T, path: Path = Path.of("/test/config")): ConfigFile<T> = ConfigFile(path, value)
+    }
 }
 
 /**
@@ -48,6 +53,19 @@ public class TlsKeyPair internal constructor(
     }
 
     override fun toString(): String = "TlsKeyPair($directory)"
+
+    public companion object {
+        /** A key pair from certificates and a key in memory, for tests. Not checked. */
+        public fun of(
+            certificateChain: List<X509Certificate>,
+            privateKey: PrivateKey,
+            ca: List<X509Certificate> = emptyList(),
+            directory: Path = Path.of("/test/tls"),
+        ): TlsKeyPair {
+            require(certificateChain.isNotEmpty()) { "certificateChain needs at least the leaf certificate" }
+            return TlsKeyPair(directory, certificateChain, privateKey, ca)
+        }
+    }
 }
 
 /** One or more PEM CA certificates. */
@@ -66,6 +84,11 @@ public class CaBundle internal constructor(
         TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm()).apply { init(toTrustStore()) }
 
     override fun toString(): String = "CaBundle($path, ${certificates.size} certificates)"
+
+    public companion object {
+        /** A bundle of [certificates], for tests. */
+        public fun of(certificates: List<X509Certificate>, path: Path = Path.of("/test/ca.pem")): CaBundle = CaBundle(path, certificates)
+    }
 }
 
 /** A PKCS#12 or JKS key store, opened with its password variable. */
@@ -74,6 +97,11 @@ public class Keystore internal constructor(
     public val keyStore: KeyStore,
 ) {
     override fun toString(): String = "Keystore($path)"
+
+    public companion object {
+        /** A key store already open, for tests. */
+        public fun of(keyStore: KeyStore, path: Path = Path.of("/test/keystore.p12")): Keystore = Keystore(path, keyStore)
+    }
 }
 
 /** A text file, such as a licence key. Read as UTF-8 and never trimmed. */
@@ -85,6 +113,11 @@ public class TextFile internal constructor(
     public val text: String get() = content
 
     override fun toString(): String = if (secret) "TextFile($path, ****)" else "TextFile($path)"
+
+    public companion object {
+        /** A text file holding [text], for tests. */
+        public fun of(text: String, secret: Boolean = false, path: Path = Path.of("/test/file.txt")): TextFile = TextFile(path, text, secret)
+    }
 }
 
 /** Opaque bytes, such as a GeoIP database. Only its size is checked; it is not read into memory. */
@@ -92,6 +125,11 @@ public class BinaryFile internal constructor(public val path: Path) {
     public fun readBytes(): ByteArray = path.toFile().readBytes()
 
     override fun toString(): String = "BinaryFile($path)"
+
+    public companion object {
+        /** A binary file at [path], for tests. */
+        public fun of(path: Path): BinaryFile = BinaryFile(path)
+    }
 }
 
 /**

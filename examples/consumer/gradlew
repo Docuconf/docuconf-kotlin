@@ -1,0 +1,4 @@
+#!/bin/sh
+# Runs the repository's Gradle wrapper on this project.
+here="$(cd "$(dirname "$0")" && pwd)"
+exec "$here/../../gradlew" -p "$here" "$@"
