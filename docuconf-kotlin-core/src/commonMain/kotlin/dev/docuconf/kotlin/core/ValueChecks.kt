@@ -73,11 +73,36 @@ public object ValueChecks {
 
     /**
      * The items of an `indexed` list (SPEC §5): `NAME__0`, `NAME__1`, ... up to the first index
-     * missing from [env]. Empty when `NAME__0` is not set.
+     * missing from [env]. Empty when `NAME__0` is not set. Use [indexedGap] to find items past a gap.
      */
     public fun indexedItems(name: String, env: Map<String, String>): List<String> {
         val out = ArrayList<String>()
         while (true) out += env["${name}__${out.size}"] ?: return out
+    }
+
+    private val indexSyntax = Regex("^(0|[1-9][0-9]*)$")
+
+    /**
+     * Why the `indexed` list [name] in [env] is not numbered from 0 without a gap, or null when it is
+     * (SPEC §5). Only `NAME__<n>` with a decimal index and no leading zero is an item; any other
+     * suffix, such as `NAME__HOST`, is ignored.
+     */
+    public fun indexedGap(name: String, env: Map<String, String>): String? {
+        val prefix = "${name}__"
+        val indexes = env.keys.asSequence()
+            .filter { it.startsWith(prefix) }
+            .map { it.substring(prefix.length) }
+            .filter { indexSyntax.matches(it) }
+            .toSet()
+        // n distinct indexes are gapless exactly when they are 0..n-1.
+        val missing = (0 until indexes.size).firstOrNull { it.toString() !in indexes } ?: return null
+        return "sets a higher index but not ${prefix}$missing; items must be numbered from 0 with no gap"
+    }
+
+    /** Checks and parses the `indexed` list [spec] from [env], including the gap rule of SPEC §5. */
+    public fun parseIndexed(spec: VarSpec, env: Map<String, String>, options: Options = Options()): Parsed {
+        indexedGap(spec.name, env)?.let { return Parsed(listOf(Violation(Codes.INVALID_TYPE, spec.name, it)), null) }
+        return parse(spec, null, options, items = indexedItems(spec.name, env))
     }
 
     /** Parses a duration in the variable's encoding, or with the host parser; null when neither accepts it. */

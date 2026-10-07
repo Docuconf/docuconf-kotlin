@@ -409,7 +409,7 @@ val timeout: kotlin.time.Duration? = values.duration("TIMEOUT")
 - `ContractFirst.check(contract, env)` returns `Result.Success` or `Result.Failure` with every
   violation, with the same codes and secret redaction as boot validation.
 - It parses every SPEC §5 encoding: lists as `csv` (with `separator`), `json` or `indexed`
-  (`NAME__0`, `NAME__1`, ...), durations as `go`, `iso8601`, `seconds` or `timespan`
+  (`NAME__0`, `NAME__1`, ..., numbered from 0 with no gap; a gap is `invalid_type`), durations as `go`, `iso8601`, `seconds` or `timespan`
   (`[d.]hh:mm:ss[.fffffff]`). Values are never trimmed, and booleans are `true` or `false` in any case.
 - Values are checked by `ValueChecks`, the code that checks a declared Hoplite class at boot, so the
   conformance suite tests the real checks. The contract itself goes through `DeclarationChecks`.

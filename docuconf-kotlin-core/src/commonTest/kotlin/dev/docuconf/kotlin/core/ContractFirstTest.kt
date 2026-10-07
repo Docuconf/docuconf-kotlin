@@ -39,7 +39,7 @@ class ContractFirstTest {
             contract,
             mapOf(
                 "RATIO" to "0.5", "DEBUG" to "TRUE", "TIMEOUT" to "1.02:03:04.5", "ISO" to "PT1.5S", "SECS" to "0.25",
-                "SHARDS__0" to "3", "SHARDS__1" to "1023", "SHARDS__3" to "9",
+                "SHARDS__0" to "3", "SHARDS__1" to "1023", "SHARDS__HOST" to "9", "SHARDS__01" to "9",
                 "TAGS" to "a,b;c", "IDS" to "[1,2]", "TOKEN" to "0123456789", "LIMITS" to """{"perMinute":60}""",
             ),
         )
@@ -49,13 +49,22 @@ class ContractFirstTest {
         assertEquals("26h3m4s500ms", Durations.formatGo(v.duration("TIMEOUT")!!.inWholeNanoseconds))
         assertEquals(1500.milliseconds, v.duration("ISO"))
         assertEquals(250.milliseconds, v.duration("SECS"))
-        assertEquals(listOf(3L, 1023L), v.longList("SHARDS"), "indexed items stop at the first missing index")
+        assertEquals(listOf(3L, 1023L), v.longList("SHARDS"), "only NAME__<n> without a leading zero is an item")
         assertEquals(listOf("a,b", "c"), v.stringList("TAGS"))
         assertEquals(listOf(1L, 2L), v.longList("IDS"))
         assertEquals("0123456789", v.string("TOKEN"))
         assertEquals(JsonValue.parse("""{"perMinute":60}"""), v.json("LIMITS"))
         assertTrue("0123456789" !in v.toString(), "secrets are masked in toString")
         assertEquals("""{"DEBUG":true,"IDS":[1,2],"ISO":"1s500ms","LIMITS":{"perMinute":60},"PORT":8080,"RATIO":0.5,"SECS":"250ms","SHARDS":[3,1023],"TAGS":["a,b","c"],"TIMEOUT":"26h3m4s500ms","TOKEN":"0123456789"}""", v.toJson().toString())
+    }
+
+    @Test
+    fun rejectsGapsInIndexedLists() {
+        for (env in listOf(mapOf("SHARDS__0" to "1", "SHARDS__2" to "3"), mapOf("SHARDS__1" to "2"))) {
+            val r = ContractFirst.check(contract, env)
+            assertTrue(r is ContractFirst.Result.Failure, "$env")
+            assertEquals(listOf(Codes.INVALID_TYPE to "SHARDS"), r.violations.map { it.code to it.input }, "$env")
+        }
     }
 
     @Test
