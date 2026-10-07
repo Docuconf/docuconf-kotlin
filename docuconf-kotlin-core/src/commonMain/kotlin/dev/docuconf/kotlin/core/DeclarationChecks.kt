@@ -59,7 +59,8 @@ public object DeclarationChecks {
             if (v.type == VarType.LIST && v.items == null) errors += "$p a list needs an item type"
             if (v.schemes != null && v.schemes.isEmpty()) errors += "$p schemes cannot be empty"
             v.deprecated?.replacedBy?.let { if (!envName.matches(it)) errors += "$p deprecated.replacedBy must be a variable name" }
-            v.default?.let { checkDefault(v, it)?.let { msg -> errors += "$p default $msg" } }
+            // A secret's default is already an error; checking its value would only add noise.
+            if (!v.secret) v.default?.let { checkDefault(v, it)?.let { msg -> errors += "$p default $msg" } }
         }
 
         val names = HashSet<String>()
