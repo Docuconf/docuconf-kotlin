@@ -138,9 +138,12 @@ internal object Overlays {
             VarType.JSON -> when {
                 node is StringNode -> node.value
                 // Hoplite's YAML parser reads every scalar as a string; validate as config files are.
-                overlay.format == ConfigFormat.YAML && spec.schema != null ->
+                overlay.format == ConfigFormat.YAML && spec.schema != null -> {
+                    // No wire string: maxLength measures the compact JSON (SPEC §4.3).
+                    ValueChecks.jsonMaxLength(spec, toJson(node).toString())?.let { return listOf(it.copy(message = "${it.message} $where")) }
                     return JsonSchemaValidator.validate(spec.schema!!, toJson(node), lenientScalars = true)
                         .map { Violation(Codes.SCHEMA_MISMATCH, v.spec.name, "$it $where") }
+                }
                 else -> toJson(node).toString()
             }
             else -> when (node) {

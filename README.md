@@ -386,17 +386,22 @@ on a `String`, `@Schemes` on an `Int`, a constraint on a nested class parameter)
 | `@Env("NAME")` | The variable's name (or a nested class's segment). |
 | `@Min`, `@Max` / `@DecimalMin`, `@DecimalMax` | Integer / float bounds. |
 | `@DurationMin("1s")`, `@DurationMax("5m")` | Duration bounds, in Go syntax or ISO 8601. |
-| `@Length(min, max)` | String or text-file length in characters (code points). |
+| `@Length(min, max)` | String or text-file length in characters (code points). On a `url` or `Json<T>` variable only `max` applies (`maxLength`): a url is measured as it is, a json value as received, whitespace included, before it is parsed (as compact JSON when it comes from an overlay as nested keys). |
 | `@Pattern("re")` | RE2 pattern, matched **anywhere** in the value (anchor with `^`/`$`). Non-RE2 features are rejected. |
 | `@Url`, `@Schemes("postgres", ...)` | URL variable, allowed schemes. |
 | `@OneOf("a", "b")` | A `String` restricted to values (an `enum class` needs nothing). |
 | `@WireName("debug")` | An enum constant's value on the wire. |
 | `@Items(min, max)`, `@ItemMin(n)`, `@ItemMax(n)` | List length; bounds on every item of a `List<Int>`/`List<Long>`. |
+| `@ItemLength(min, max)` | Length in characters of every item of a `List<String>` (`itemMinLength`/`itemMaxLength`), checked after splitting, so the separator is never counted. On a `List<Int>` it is a declaration error. |
 | `@Group`, `@Examples`, `@DeprecatedInput(message, replacedBy)` | Docs metadata. Deprecated inputs log a warning at boot when set. |
 | `@NotInContract` | Leave a parameter out, e.g. a value Hoplite reads from Vault (SPEC §4.4). |
 | `@FileInput(name, path, pathEnv, maxSize, secret)` | Declares a file input on a file-typed parameter. |
 | `@Format`, `@Tls`, `@MinCertificates`, `@KeystoreSpec` | File input details: config format, TLS constraints, CA bundle size, keystore format and password variable. |
 | `@ConfigOverlay(name, path, description)` | A config-file overlay the platform mounts (below). |
+
+Lengths count characters, meaning Unicode code points (`codePointCount`), never bytes or UTF-16 units
+(SPEC §4.3): `日本` is 2, `ZÜ01` fits `@ItemLength(max = 4)`, and an emoji is 1 although Kotlin's `String.length`
+says 2. A value above a limit is `out_of_range` at boot; a too-long secret reports its length, never its value.
 
 Defaults are read by constructing the class once with placeholder values for required parameters,
 so keep `init` checks off parameters that have defaults (use constraints). The declaration is checked

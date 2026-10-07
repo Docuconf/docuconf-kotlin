@@ -207,7 +207,13 @@ internal object DeclarationReader {
                     }
                     is DecimalMin, is DecimalMax -> if (type != VarType.FLOAT) "$name applies to Double or Float, not $kind" + (if (type == VarType.INT) "; use @Min/@Max" else "") else null
                     is DurationMin, is DurationMax -> if (type != VarType.DURATION) "$name applies to java.time.Duration or kotlin.time.Duration, not $kind" else null
-                    is Length -> if (type != VarType.STRING) "$name applies to String or Secret (not a URL or enum), not $kind" + (if (type == VarType.LIST) "; use @Items for the number of items" else "") else null
+                    // On a URL or Json<T> only max applies (maxLength); a min there is reported by DeclarationChecks.
+                    is Length -> if (type != VarType.STRING && type != VarType.URL && type != VarType.JSON) {
+                        "$name applies to String or Secret, or with max only to a URL or Json<T>, not $kind" +
+                            (if (type == VarType.LIST) "; use @Items for the number of items, or @ItemLength for each item" else "")
+                    } else {
+                        null
+                    }
                     is Pattern -> if (type != VarType.STRING) "$name applies to String or Secret (not a URL or enum), not $kind" else null
                     is Schemes, is Url -> if (k != String::class && k != Secret::class && k != URI::class && k != URL::class) "$name applies to String, Secret, URI or URL, not $kind" else null
                     is OneOf -> when {
@@ -312,6 +318,11 @@ internal object DeclarationReader {
             if ((itemMin != null || itemMax != null) && listItems != ListItems.INT) {
                 errors += "${where(path)}: @ItemMin and @ItemMax only apply to List<Int> or List<Long>"
             }
+            val itemLength = a.filterIsInstance<ItemLength>().firstOrNull()
+            if (itemLength != null && listItems != ListItems.STRING) {
+                errors += "${where(path)}: @ItemLength only applies to List<String>"
+            }
+            val stringItems = itemLength?.takeIf { listItems == ListItems.STRING }
             val intItems = type == VarType.LIST && itemClass == Int::class
             val rawDefault = defaults[p.name]
             val default = if (secret && p.isOptional && rawDefault != null) {
@@ -365,6 +376,8 @@ internal object DeclarationReader {
                     maxItems = items?.max?.takeIf { it >= 0 },
                     itemMin = if (intItems) maxOf(itemMin ?: Long.MIN_VALUE, Int.MIN_VALUE.toLong()) else itemMin,
                     itemMax = if (intItems) minOf(itemMax ?: Long.MAX_VALUE, Int.MAX_VALUE.toLong()) else itemMax,
+                    itemMinLength = stringItems?.min?.takeIf { it >= 0 },
+                    itemMaxLength = stringItems?.max?.takeIf { it >= 0 },
                     schema = schema,
                 ),
                 path,

@@ -187,6 +187,8 @@ public object ContractFirst {
             maxItems = int("maxItems"),
             itemMin = long("itemMin"),
             itemMax = long("itemMax"),
+            itemMinLength = int("itemMinLength"),
+            itemMaxLength = int("itemMaxLength"),
             schema = f["schema"]?.takeIf { it != JsonValue.Null },
         )
     }

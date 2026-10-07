@@ -92,7 +92,7 @@ public data class VarSpec(
     val minDuration: String? = null,
     val maxDuration: String? = null,
     val durationEncoding: DurationEncoding = DurationEncoding.GO,
-    // string
+    // string; maxLength also bounds a url or json value (SPEC §4.3), in characters (Unicode code points)
     val minLength: Int? = null,
     val maxLength: Int? = null,
     val pattern: String? = null,
@@ -109,6 +109,9 @@ public data class VarSpec(
     // int list item bounds
     val itemMin: Long? = null,
     val itemMax: Long? = null,
+    // string list item lengths, in characters (Unicode code points)
+    val itemMinLength: Int? = null,
+    val itemMaxLength: Int? = null,
     // json
     val schema: JsonValue? = null,
 )
