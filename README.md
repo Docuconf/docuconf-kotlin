@@ -15,6 +15,8 @@ See [Mobile](#mobile-android-and-ios) for how the code is laid out for Android a
 
 Status: v0.1, `apiVersion: docuconf.dev/v1alpha1`. Licence: [MIT](LICENSE).
 
+Example: [`examples/orders/`](examples/orders/), a small HTTP service with its exported contract.
+
 | Artifact | What it is |
 |---|---|
 | `dev.docuconf:docuconf-hoplite` | The Hoplite integration: annotations, file input types, boot validation, export. Depends on the core and on `hoplite-core` 3.0. |

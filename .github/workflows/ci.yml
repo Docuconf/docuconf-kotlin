@@ -45,3 +45,38 @@ jobs:
           name: test-reports-java${{ matrix.java }}
           path: "**/build/reports/tests/"
           if-no-files-found: ignore
+
+  # The orders example (examples/orders), built against the SDK in this repository.
+  orders-example:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: docuconf/docuconf-go
+          path: docuconf-go
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+          cache: false
+      - run: go install cuelang.org/go/cmd/cue@v0.17.1
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Build
+        run: ./gradlew :orders:installDist --stacktrace
+      - name: The committed contract matches a fresh export
+        run: |
+          ./gradlew :orders:exportContract
+          git diff --exit-code -- examples/orders/contract.cue
+      - name: cue vet the contract against the meta-schema
+        run: |
+          dir="$(mktemp -d)"
+          cp -r docuconf-go/spec/cue/cue.mod docuconf-go/spec/cue/contract "$dir/"
+          mkdir "$dir/orders"
+          cp examples/orders/contract.cue "$dir/orders/"
+          cd "$dir" && cue vet -c ./orders
+      - name: Smoke test
+        run: examples/orders/smoke.sh

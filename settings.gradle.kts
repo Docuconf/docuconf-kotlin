@@ -18,3 +18,6 @@ rootProject.name = "docuconf-kotlin"
 include("docuconf-kotlin-core")
 // The Hoplite integration for server-side Kotlin: annotations, reflection, boot validation, TLS checks.
 include("docuconf-hoplite")
+// The "orders" example service (examples/orders), built against the SDK in this repository.
+include("orders")
+project(":orders").projectDir = file("examples/orders")
