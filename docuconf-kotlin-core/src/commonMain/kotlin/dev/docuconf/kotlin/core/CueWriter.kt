@@ -56,6 +56,7 @@ public object CueWriter {
         w.open("${label(v.name)}: {")
         w.field("type", str(v.type.wire))
         w.field("description", str(v.description))
+        v.details?.let { w.field("details", str(it)) }
         if (v.required) w.field("required", "true")
         if (v.secret) w.field("secret", "true")
         v.group?.let { w.field("group", str(it)) }
@@ -94,6 +95,7 @@ public object CueWriter {
         f.format?.let { w.field("format", str(it.wire)) }
         f.keystoreFormat?.let { w.field("format", str(it.wire)) }
         w.field("description", str(f.description))
+        f.details?.let { w.field("details", str(it)) }
         if (f.required) w.field("required", "true")
         // tls and keystore are always secret; the meta-schema fixes the field for them.
         if (f.secret && f.type != FileType.TLS && f.type != FileType.KEYSTORE) w.field("secret", "true")

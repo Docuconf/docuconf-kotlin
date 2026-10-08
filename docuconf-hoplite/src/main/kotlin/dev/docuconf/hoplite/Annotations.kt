@@ -6,7 +6,7 @@ import dev.docuconf.kotlin.core.KeystoreFormat
 import dev.docuconf.kotlin.core.Reload
 
 // docuconf metadata for Hoplite config classes. Hoplite binds the data class; these annotations add
-// what it cannot express: descriptions (KDoc is not available at runtime), constraints, URL schemes
+// what it cannot express: descriptions (KDoc is not available at runtime unless the Gradle plugin indexes it), constraints, URL schemes
 // and file inputs. All of them go on primary-constructor parameters, except [ConfigOverlay], which
 // goes on the root config class.
 
@@ -59,11 +59,19 @@ public annotation class Env(val value: String)
 @MustBeDocumented
 public annotation class WireName(val value: String)
 
-/** The description of a variable or file input. Required for every input; at least 5 characters. */
+/**
+ * The description of a variable or file input, and optionally its details (SPEC §14.7). Every input needs
+ * a description of at least 5 characters: [value], or else the first sentence of the parameter's KDoc,
+ * which the `dev.docuconf` Gradle plugin indexes at build time. [details] (CommonMark, at most 4000
+ * characters, for generated docs only) defaults to the rest of the KDoc.
+ *
+ * @property value the description; empty to take it from the KDoc
+ * @property details longer docs in CommonMark; empty to take them from the KDoc
+ */
 @Target(AnnotationTarget.VALUE_PARAMETER)
 @Retention(AnnotationRetention.RUNTIME)
 @MustBeDocumented
-public annotation class Doc(val value: String)
+public annotation class Doc(val value: String = "", val details: String = "")
 
 /** A free-form group for docs (`database`, `http`). On a nested config class parameter it applies to everything inside. */
 @Target(AnnotationTarget.VALUE_PARAMETER)

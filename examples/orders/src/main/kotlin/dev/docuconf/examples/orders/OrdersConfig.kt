@@ -23,7 +23,17 @@ data class OrdersConfig(
     @Doc("Postgres connection URL for the orders database") @Schemes("postgres") val databaseUrl: Secret,
     @Doc("Origins allowed to call the API (CORS)") @Items(min = 1) val allowedOrigins: List<String> = listOf("http://localhost:3000"),
     @Doc("Time limit for handling one request") @DurationMin("1s") @DurationMax("5m") val requestTimeout: Duration = Duration.ofSeconds(30),
-    @Doc("Number of background workers that process orders") @Min(1) @Max(64) val workerCount: Int = 4,
+    /**
+     * Number of background workers that process orders
+     *
+     * A KDoc works instead of @Doc: its first sentence is the description, and the rest is the details,
+     * longer docs for `docuconf docs`. Each worker holds one connection from the pool of [databaseUrl],
+     * so keep this below the database's connection limit.
+     *
+     * - Raise it when the order queue backs up.
+     * - Lower it when the database is the bottleneck.
+     */
+    @Min(1) @Max(64) val workerCount: Int = 4,
 )
 
 /** Lowercase on the wire (`LOG_LEVEL=debug`), idiomatic constants in Kotlin. */

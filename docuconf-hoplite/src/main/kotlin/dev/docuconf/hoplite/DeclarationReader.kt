@@ -137,8 +137,8 @@ internal object DeclarationReader {
                 val optional = parentOptional || p.isOptional || t.isMarkedNullable
                 val group = p.annotations.filterIsInstance<Group>().firstOrNull()?.value ?: inheritedGroup
                 when {
-                    kc in fileTypes -> fileInput(p, kc, here, optional, group)
-                    isScalar(kc, t) -> variable(p, kc, here, env?.let { listOf(it) } ?: hereEnv, optional, group, defaults)
+                    kc in fileTypes -> fileInput(k, p, kc, here, optional, group)
+                    isScalar(kc, t) -> variable(k, p, kc, here, env?.let { listOf(it) } ?: hereEnv, optional, group, defaults)
                     kc == Map::class -> warnings += "${where(here)}: maps cannot be set by the platform through environment variables; left out of the contract (file-only)"
                     kc.isData || kc.primaryConstructor != null && !kc.java.isInterface && kc.java.`package`?.name?.startsWith("java.") != true -> {
                         nestedAnnotations(p, here)
@@ -243,12 +243,26 @@ internal object DeclarationReader {
 
         fun where(path: List<String>) = "${root.simpleName}.${path.joinToString(".")}"
 
-        fun variable(p: KParameter, k: KClass<*>, path: List<String>, envPath: List<String>, optional: Boolean, group: String?, defaults: Map<String, Any?>) {
+        /**
+         * An input's description and details (SPEC §14.7): [Doc] values, else the parameter's KDoc,
+         * whose first sentence is the description and the rest the details.
+         */
+        fun docs(owner: KClass<*>, p: KParameter, path: List<String>): Pair<String?, String?> {
+            val annotation = p.annotations.filterIsInstance<Doc>().firstOrNull()
+            val (kdocDescription, kdocDetails) = KDocs.of(owner, p.name ?: "")
+            val description = annotation?.value?.ifEmpty { null } ?: kdocDescription
+            val details = annotation?.details?.ifEmpty { null } ?: kdocDetails
+            if (description == null) {
+                errors += "${where(path)}: add @Doc(\"...\") with a description of at least 5 characters, or a KDoc comment (indexed by the dev.docuconf Gradle plugin)"
+            }
+            return description to details
+        }
+
+        fun variable(owner: KClass<*>, p: KParameter, k: KClass<*>, path: List<String>, envPath: List<String>, optional: Boolean, group: String?, defaults: Map<String, Any?>) {
             val a = p.annotations
             val name = envName(envPath)
             names.getOrPut(name) { ArrayList() } += path
-            val doc = a.filterIsInstance<Doc>().firstOrNull()?.value
-            if (doc == null) errors += "${where(path)}: add @Doc(\"...\") with a description of at least 5 characters"
+            val (doc, details) = docs(owner, p, path)
             val secret = k == Secret::class
             val length = a.filterIsInstance<Length>().firstOrNull()
             val items = a.filterIsInstance<Items>().firstOrNull()
@@ -350,6 +364,7 @@ internal object DeclarationReader {
                     name = name,
                     type = type,
                     description = doc ?: "",
+                    details = details,
                     required = !optional,
                     secret = secret,
                     group = group,
@@ -385,15 +400,14 @@ internal object DeclarationReader {
             )
         }
 
-        fun fileInput(p: KParameter, k: KClass<*>, path: List<String>, optional: Boolean, group: String?) {
+        fun fileInput(owner: KClass<*>, p: KParameter, k: KClass<*>, path: List<String>, optional: Boolean, group: String?) {
             val a = p.annotations
             val input = a.filterIsInstance<FileInput>().firstOrNull()
             if (input == null) {
                 errors += "${where(path)}: add @FileInput(name = ..., path = ...)"
                 return
             }
-            val doc = a.filterIsInstance<Doc>().firstOrNull()?.value
-            if (doc == null) errors += "${where(path)}: add @Doc(\"...\") with a description of at least 5 characters"
+            val (doc, details) = docs(owner, p, path)
             val type = when (k) {
                 ConfigFile::class -> FileType.CONFIG
                 TlsKeyPair::class -> FileType.TLS
@@ -441,6 +455,7 @@ internal object DeclarationReader {
                     name = input.name,
                     type = type,
                     description = doc ?: "",
+                    details = details,
                     path = input.path,
                     required = !optional,
                     secret = input.secret || type == FileType.TLS || type == FileType.KEYSTORE,

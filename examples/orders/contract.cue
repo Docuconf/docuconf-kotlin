@@ -55,6 +55,7 @@ contract.#Contract & {
 		WORKER_COUNT: {
 			type: "int"
 			description: "Number of background workers that process orders"
+			details: "A KDoc works instead of @Doc: its first sentence is the description, and the rest is the details,\nlonger docs for `docuconf docs`. Each worker holds one connection from the pool of `databaseUrl`,\nso keep this below the database's connection limit.\n\n- Raise it when the order queue backs up.\n- Lower it when the database is the bottleneck."
 			configKey: "workerCount"
 			min: 1
 			max: 64

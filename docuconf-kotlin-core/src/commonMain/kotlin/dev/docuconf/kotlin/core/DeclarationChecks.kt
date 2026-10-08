@@ -38,6 +38,7 @@ public object DeclarationChecks {
             if (!envName.matches(v.name)) errors += "$p environment variable names must match ^[A-Z][A-Z0-9_]*$"
             if (featureFlag.containsMatchIn(v.name)) warnings += "$p looks like a feature flag; flags that change without a rollout belong in a flag service, not the contract (SPEC §10)"
             checkDescription(p, v.description, errors)
+            checkDetails(p, v.details, errors)
             if (v.required && v.default != null) errors += "$p a required variable cannot have a default"
             if (v.secret && v.default != null) errors += "$p a secret cannot have a default"
             if (v.secret && v.examples.isNotEmpty()) errors += "$p a secret cannot have examples"
@@ -84,6 +85,7 @@ public object DeclarationChecks {
             if (!names.add(f.name)) errors += "$p declared more than once"
             if (!inputName.matches(f.name)) errors += "$p file input names must be DNS labels starting with a letter (^[a-z]([-a-z0-9]{0,40}[a-z0-9])?$)"
             checkDescription(p, f.description, errors)
+            checkDetails(p, f.details, errors)
             if (!isNormalisedAbsolute(f.path)) {
                 errors += "$p path \"${f.path}\" must be absolute and normalised"
             } else {
@@ -146,6 +148,21 @@ public object DeclarationChecks {
         val r = check(contract)
         if (r.errors.isNotEmpty()) throw DeclarationException(r.errors)
         return r.warnings
+    }
+
+    /** The most characters (Unicode code points) an input's details may have (SPEC §4.2). */
+    public const val MAX_DETAILS: Int = 4000
+
+    /** Why [details] cannot go in a contract, or null when it can (or is absent): blank, or over [MAX_DETAILS] characters. */
+    public fun detailsProblem(details: String?): String? {
+        if (details == null) return null
+        if (details.isBlank()) return "details must not be blank"
+        val n = ValueChecks.codePointCount(details)
+        return if (n > MAX_DETAILS) "details are $n characters (Unicode code points); the most is $MAX_DETAILS" else null
+    }
+
+    private fun checkDetails(p: String, details: String?, errors: MutableList<String>) {
+        detailsProblem(details)?.let { errors += "$p $it" }
     }
 
     private fun checkDescription(p: String, description: String, errors: MutableList<String>) {

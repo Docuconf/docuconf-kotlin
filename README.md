@@ -64,7 +64,7 @@ from Maven Central, `id("dev.docuconf")` from the Gradle Plugin Portal) comes wi
 | `dev.docuconf:docuconf-hoplite` | Annotations, file input types, boot validation, export. Depends on `hoplite-core` 3.0. |
 | `dev.docuconf:docuconf-ktor` | Ktor integration (`docuconfServer`, `docuconfConfig`). |
 | `dev.docuconf:docuconf-kotlin-core` | The declaration model, checks and contract writer (Kotlin Multiplatform). |
-| `dev.docuconf` Gradle plugin | `docuconfExport` and `docuconfCheck` tasks. |
+| `dev.docuconf` Gradle plugin | `docuconfExport` and `docuconfCheck` tasks; `docuconfKDoc` indexes KDoc for descriptions and details. |
 
 Add Hoplite's parser modules (`com.sksamuel.hoplite:hoplite-yaml:3.0.0`) for the config file formats
 you read, as with Hoplite itself. Kotlin 2.1 or later: Hoplite 3.0 itself depends on kotlin-stdlib 2.2.
@@ -89,6 +89,9 @@ enum class LogLevel { @WireName("debug") DEBUG, @WireName("info") INFO, @WireNam
   required, a default value is exported as `default`, a nullable one is optional.
 - **`@DocuconfService`** holds the service name, and the env `prefix` and `baseSources` when you use
   them. Boot and export both read it, so they cannot drift apart.
+- **Descriptions and details.** Every input needs a description: `@Doc("...")`, or the first sentence
+  of the parameter's KDoc. The rest of the KDoc is the input's details, longer docs for generated
+  docs: see [Descriptions and details](#descriptions-and-details).
 
 ## 3. Run
 
@@ -386,7 +389,7 @@ on a `String`, `@Schemes` on an `Int`, a constraint on a nested class parameter)
 | Annotation | Meaning |
 |---|---|
 | `@DocuconfService(name, prefix, baseSources)` | Service name, env prefix, config files in the image. Read by boot and export. |
-| `@Doc("...")` | Description, at least 5 characters. **Required** on every variable and file input. |
+| `@Doc("...", details = "...")` | Description, at least 5 characters, and optional details (CommonMark). Every variable and file input needs a description: `@Doc`, or the parameter's KDoc ([below](#descriptions-and-details)). |
 | `@Env("NAME")` | The variable's name (or a nested class's segment). |
 | `@Min`, `@Max` / `@DecimalMin`, `@DecimalMax` | Integer / float bounds. |
 | `@DurationMin("1s")`, `@DurationMax("5m")` | Duration bounds, in Go syntax or ISO 8601. |
@@ -412,6 +415,40 @@ so keep `init` checks off parameters that have defaults (use constraints). The d
 when it is first used (load or export): names, descriptions, defaults against their own constraints,
 secrets without defaults or examples, RE2 patterns, file paths and mount directories. Names that look
 like feature flags (`FF_`, `FEATURE_`, `ENABLE_`) get a warning (SPEC §10).
+
+### Descriptions and details
+
+Every input has a **description**: what it is, in one phrase of plain text. It is `@Doc("...")`, or
+else the first sentence of the parameter's KDoc, as Spring's configuration metadata takes it for Java:
+up to the first period followed by white space, or the first blank line. An input may also have
+**details**: CommonMark on why it exists and when to change it, at most 4000 characters (Unicode code
+points), for generated docs only and never read at runtime. They are `@Doc(details = "...")`, or else
+the rest of the KDoc. From the orders example:
+
+```kotlin
+    /**
+     * Number of background workers that process orders
+     *
+     * A KDoc works instead of @Doc: its first sentence is the description, and the rest is the details,
+     * longer docs for `docuconf docs`. Each worker holds one connection from the pool of [databaseUrl],
+     * so keep this below the database's connection limit.
+     *
+     * - Raise it when the order queue backs up.
+     * - Lower it when the database is the bottleneck.
+     */
+    @Min(1) @Max(64) val workerCount: Int = 4,
+```
+
+KDoc is not in compiled classes, so the `dev.docuconf` Gradle plugin's `docuconfKDoc` task reads it
+from the sources at build time into the resource `META-INF/docuconf/kdoc.properties`, which boot and
+export both read. A KDoc on the parameter, or an `@property` tag in the class's KDoc, both count.
+KDoc is Markdown already: links to declarations (`[databaseUrl]`) become code spans, and block tags
+(`@see`, `@sample`) are dropped. Without the plugin, only `@Doc` counts. Blank details, or more than
+4000 characters, fail at export and at boot.
+
+`docuconf docs` in the [docuconf CLI](https://github.com/docuconf/docuconf-go) generates CONFIG.md and
+CONFIG.agents.md from the exported contract: `docuconf docs contract.cue -o CONFIG.md`, and
+`--format agents -o CONFIG.agents.md`.
 
 ## File inputs
 
