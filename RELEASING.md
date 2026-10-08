@@ -87,6 +87,74 @@ A deployment that fails validation can be dropped in the Portal (or with
 `./gradlew dropMavenCentralDeployment`) and the release workflow re-run on the tag after fixing it
 (`gh workflow run release.yml --ref vX.Y.Z`).
 
+## GitHub Packages and Releases
+
+The `github` job in `.github/workflows/release.yml` runs on the same `v*` tags. It repeats the tag check and
+`./gradlew check`, then:
+
+- runs `./gradlew publishAllPublicationsToGitHubPackagesRepository`, which publishes `dev.docuconf:docuconf-kotlin-core`
+  (with `docuconf-kotlin-core-jvm`) and `dev.docuconf:docuconf-hoplite`, with sources and javadoc jars, to
+  `https://maven.pkg.github.com/Docuconf/docuconf-kotlin`. They are not GPG-signed (no `signingInMemoryKey` is set).
+  The `GitHubPackages` repository is added to every publishing module in the root `build.gradle.kts`;
+- creates the GitHub Release for the tag if it does not exist, and attaches the JVM jars of both artifacts, with their
+  sources and javadoc jars.
+
+It does not depend on the Maven Central `publish` job, so it works before the Central Portal namespace, token, signing
+key and `maven-central` environment exist. Gradle reads the credentials from
+`ORG_GRADLE_PROJECT_GitHubPackagesUsername` / `ORG_GRADLE_PROJECT_GitHubPackagesPassword`, which the workflow sets to
+the actor and its own `GITHUB_TOKEN` (`packages: write`, `contents: write`); there are no secrets or accounts to set
+up. The only requirement is that the `Docuconf` organization lets `GITHUB_TOKEN` write packages, which it does unless
+package creation has been restricted under Organization settings > Packages. Other Gradle tasks never need these
+credentials.
+
+### Installing from GitHub Packages
+
+GitHub's Maven registry requires a token even for public packages. Create a personal access token (classic) with the
+`read:packages` scope. With Gradle, in `settings.gradle.kts`:
+
+```kotlin
+dependencyResolutionManagement {
+    repositories {
+        mavenCentral()
+        maven("https://maven.pkg.github.com/Docuconf/docuconf-kotlin") {
+            credentials {
+                username = providers.environmentVariable("GITHUB_ACTOR").orNull ?: "YOUR_GITHUB_USERNAME"
+                password = providers.environmentVariable("GITHUB_TOKEN").get()
+            }
+        }
+    }
+}
+```
+
+then depend on `dev.docuconf:docuconf-hoplite:0.1.0` as usual. With Maven, add a server to `~/.m2/settings.xml`:
+
+```xml
+<settings>
+  <servers>
+    <server>
+      <id>github-docuconf</id>
+      <username>YOUR_GITHUB_USERNAME</username>
+      <password>${env.GITHUB_TOKEN}</password>
+    </server>
+  </servers>
+</settings>
+```
+
+and the repository, with the same `<id>`, to the `pom.xml`:
+
+```xml
+<repositories>
+  <repository>
+    <id>github-docuconf</id>
+    <url>https://maven.pkg.github.com/Docuconf/docuconf-kotlin</url>
+  </repository>
+</repositories>
+```
+
+Without a token, download the jars from the GitHub Release and add them as file dependencies
+(`implementation(files("libs/docuconf-hoplite-0.1.0.jar", "libs/docuconf-kotlin-core-jvm-0.1.0.jar"))`, plus Hoplite
+itself from Maven Central).
+
 ## docuconf-go version
 
 docuconf-go owns the spec, the CUE meta-schema (`spec/cue`), the conformance suite (`conformance/cases.json`) and the
