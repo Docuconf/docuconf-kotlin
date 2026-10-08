@@ -1,5 +1,7 @@
 # docuconf for Kotlin
 
+Documentation: [docuconf.dev](https://docuconf.dev) · [Kotlin guide](https://docuconf.dev/languages/kotlin/)
+
 Typed configuration contracts between a Kotlin service and the Kubernetes platform that runs it,
 built on [Hoplite](https://github.com/sksamuel/hoplite). You keep writing a Hoplite data class;
 docuconf adds what Hoplite cannot express (descriptions, secrets, constraints, URL schemes, file

@@ -13,7 +13,7 @@ the environment at boot, reporting every problem at once. The server is the JDK'
 |---|---|---|
 | `PORT` | int | 1–65535, default `8080` |
 | `LOG_LEVEL` | enum | `debug`, `info`, `warn`, `error`; default `info` |
-| `DATABASE_URL` | url | secret, required, scheme `postgres` |
+| `DATABASE_URL` | url | secret, required, scheme `postgres`, at most 2048 characters |
 | `ALLOWED_ORIGINS` | list of strings (csv) | at least 1 item; default `http://localhost:3000` |
 | `REQUEST_TIMEOUT` | duration (ISO 8601 like `PT30S`, or Go syntax like `1m30s`) | 1s–5m, default `30s` |
 | `WORKER_COUNT` | int | 1–64, default `4` |
@@ -59,6 +59,26 @@ The `dev.docuconf` Gradle plugin runs the SDK's export command (`dev.docuconf.ho
 rewrites `contract.cue`; the service name comes from `@DocuconfService(name = "orders")`. Commit the
 result. `./gradlew :orders:docuconfCheck` (part of `check`, and run in CI) fails with a diff when the
 committed file differs from a fresh export.
+
+## Generated docs
+
+[`CONFIG.md`](CONFIG.md), [`CONFIG.agents.md`](CONFIG.agents.md) and [`docs.json`](docs.json) are
+generated from `contract.cue` by the `docuconf` CLI from
+[docuconf-go](https://github.com/Docuconf/docuconf-go); never edit them by hand. The first is the
+reference for developers, the second the rules and facts AI agents need to change the code or set
+deployment values, and the third the docs model both are rendered from. Regenerate them after
+exporting the contract:
+
+```sh
+cd examples/orders
+docuconf docs contract.cue -o CONFIG.md
+docuconf docs contract.cue --format agents -o CONFIG.agents.md
+docuconf docs contract.cue --format model -o docs.json
+```
+
+CI runs the same commands with `--check` and fails when a file is out of date; it checks
+[`../consumer`](../consumer)'s generated docs the same way. `WORKER_COUNT` shows where the text
+comes from: the first sentence of its KDoc is the description, and the rest its details.
 
 ## Deploy
 
