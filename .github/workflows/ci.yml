@@ -100,9 +100,10 @@ jobs:
         with:
           distribution: temurin
           java-version: "17"
+      # docuconf-go's cmd/docuconf, built below for the docs check, needs Go 1.25.
       - uses: actions/setup-go@v5
         with:
-          go-version: "1.24"
+          go-version: "1.25"
           cache: false
       - run: go install cuelang.org/go/cmd/cue@v0.17.1
       - uses: gradle/actions/setup-gradle@v4
@@ -119,6 +120,21 @@ jobs:
           mkdir "$dir/orders"
           cp examples/orders/contract.cue "$dir/orders/"
           cd "$dir" && cue vet -c ./orders
+      - name: Install the docuconf CLI
+        working-directory: docuconf-go/cmd/docuconf
+        run: |
+          go install .
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+      # CONFIG.md, CONFIG.agents.md and docs.json are generated from the committed contract.cue (release
+      # PRs bump its metadata.generator.version) by the docuconf CLI of the pinned docuconf-go; they must
+      # match what it writes today. These are the example README's commands, with --check.
+      - name: Generated docs are up to date
+        working-directory: examples/orders
+        run: |
+          git checkout -- contract.cue
+          docuconf docs contract.cue --check CONFIG.md
+          docuconf docs contract.cue --format agents --check CONFIG.agents.md
+          docuconf docs contract.cue --format model --check docs.json
       - name: Smoke test
         run: examples/orders/smoke.sh
 
@@ -134,3 +150,37 @@ jobs:
           java-version: "17"
       - uses: gradle/actions/setup-gradle@v4
       - run: examples/consumer/run.sh
+      # The consumer's generated docs (CONFIG.md, CONFIG.agents.md, docs.json) match what the docuconf
+      # CLI of the pinned docuconf-go writes from the committed contract.cue. run.sh re-exported
+      # contract.cue in place, and release PRs bump its metadata.generator.version, so restore it first.
+      - name: Pick the docuconf-go ref
+        id: dcref
+        env:
+          EVENT: ${{ github.event_name }}
+          INPUT_REF: ${{ inputs.docuconf_go_ref }}
+        run: |
+          if [ "$EVENT" = schedule ]; then echo "ref=main" >> "$GITHUB_OUTPUT"
+          elif [ -n "$INPUT_REF" ]; then echo "ref=$INPUT_REF" >> "$GITHUB_OUTPUT"
+          else echo "ref=$(tr -d '[:space:]' < .github/docuconf-go.ref)" >> "$GITHUB_OUTPUT"; fi
+      - name: Check out docuconf-go
+        uses: actions/checkout@v4
+        with:
+          repository: docuconf/docuconf-go
+          path: docuconf-go
+          ref: ${{ steps.dcref.outputs.ref }}
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache: false
+      - name: Install the docuconf CLI
+        working-directory: docuconf-go/cmd/docuconf
+        run: |
+          go install .
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+      - name: Generated docs are up to date
+        working-directory: examples/consumer
+        run: |
+          git checkout -- contract.cue
+          docuconf docs contract.cue --check CONFIG.md
+          docuconf docs contract.cue --format agents --check CONFIG.agents.md
+          docuconf docs contract.cue --format model --check docs.json
