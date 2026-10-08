@@ -108,11 +108,10 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
       - name: Build
         run: ./gradlew :orders:installDist --stacktrace
+      # docuconfCheck fails with a diff when the committed contract differs from a fresh export in
+      # anything but metadata.generator.version, the SDK version every release PR bumps.
       - name: The committed contract matches a fresh export
-        run: |
-          ./gradlew :orders:docuconfCheck
-          ./gradlew :orders:docuconfExport
-          git diff --exit-code -- examples/orders/contract.cue
+        run: ./gradlew :orders:docuconfCheck
       - name: cue vet the contract against the meta-schema
         run: |
           dir="$(mktemp -d)"

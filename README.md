@@ -43,7 +43,7 @@ plugins {
 }
 
 dependencies {
-    implementation("dev.docuconf:docuconf-hoplite:0.1.0-SNAPSHOT")
+    implementation("dev.docuconf:docuconf-hoplite:0.1.0-SNAPSHOT") // x-release-please-version
     testImplementation(kotlin("test"))
 }
 ```
@@ -55,7 +55,8 @@ run this in the docuconf checkout and add `mavenLocal()` to your repositories:
 ./gradlew publishToMavenLocal
 ```
 
-That publishes `0.1.0-SNAPSHOT` to `~/.m2`. Registry install (`implementation("dev.docuconf:docuconf-hoplite:0.1.0")`
+That publishes `0.1.0-SNAPSHOT` to `~/.m2`. <!-- x-release-please-version -->
+Registry install (`implementation("dev.docuconf:docuconf-hoplite:0.1.0")` <!-- x-release-please-version -->
 from Maven Central, `id("dev.docuconf")` from the Gradle Plugin Portal) comes with the first release.
 
 | Artifact | What it is |
@@ -153,9 +154,10 @@ class AppConfigTest {
 
     @Test
     fun theContractIsCurrent() {
-        // The same check as `./gradlew docuconfCheck`, as a unit test.
+        // The same check as `./gradlew docuconfCheck`, as a unit test: it ignores only
+        // metadata.generator.version, the docuconf version that wrote the file.
         val committed = java.io.File("contract.cue").readText()
-        assertEquals(committed, Docuconf.exportCue(AppConfig::class))
+        assertEquals(Docuconf.withoutGeneratorVersion(committed), Docuconf.withoutGeneratorVersion(Docuconf.exportCue(AppConfig::class)))
     }
 }
 ```
@@ -181,7 +183,9 @@ docuconf {
 ```
 
 `docuconfExport` writes `contract.cue`; commit it. `docuconfCheck`, part of `check`, fails with a
-diff when the committed file differs from a fresh export, so CI catches a stale contract. Export
+diff when the committed file differs from a fresh export, so CI catches a stale contract. It ignores
+only the value of `metadata.generator.version`, the docuconf version that wrote the file, so
+upgrading docuconf does not by itself make a contract stale. Export
 needs no environment and is deterministic. For this project:
 
 ```cue

@@ -47,22 +47,45 @@ place; Central rejects POMs without `<licenses>`.
 
 ## Each release
 
-1. Between releases `VERSION_NAME` is a `-SNAPSHOT` (`0.1.0-SNAPSHOT`), so `publishToMavenLocal`
-   never writes a release version into anyone's `~/.m2`. For the release, set `VERSION_NAME` in
-   `gradle.properties` and in `docuconf-gradle-plugin/gradle.properties` to the release version, and
-   `Docuconf.VERSION` in `docuconf-hoplite/src/main/kotlin/dev/docuconf/hoplite/Docuconf.kt` to the
-   same version without `-SNAPSHOT` (a test fails if they differ). Update the golden contract
-   (`UPDATE_GOLDEN=1`) when the version changes, since it records it. Update the README's Install
-   section to the registry coordinates. Afterwards, move `VERSION_NAME` to the next `-SNAPSHOT`.
-2. Run `./gradlew check publishToMavenLocal` and try the artifacts from `~/.m2` in a sample app.
-3. Commit, tag and push: `git tag v0.1.0 && git push origin v0.1.0`.
+Releases are automated with [release-please](https://github.com/googleapis/release-please); see
+[CONTRIBUTING.md](CONTRIBUTING.md#how-releases-happen) for the commit conventions it reads.
+
+Between releases `VERSION_NAME` is a `-SNAPSHOT` (`0.1.0-SNAPSHOT`), so `publishToMavenLocal` never writes a
+release version into anyone's `~/.m2`.
+
+1. Check out the open release PR (`chore(main): release X.Y.Z`), run `./gradlew check publishToMavenLocal` and try
+   the artifacts from `~/.m2` in a sample app.
+2. Merge the release PR. It already sets the release version, without `-SNAPSHOT`, everywhere it is written: on
+   every `x-release-please-version` line of the files under `extra-files` in `release-please-config.json`
+   (`VERSION_NAME` in `gradle.properties` and `docuconf-gradle-plugin/gradle.properties`, `Docuconf.VERSION` in
+   `docuconf-hoplite/src/main/kotlin/dev/docuconf/hoplite/Docuconf.kt`, the dependency in `README.md` and
+   `examples/consumer/build.gradle.kts`), and it updates `CHANGELOG.md`. The golden contract and the example
+   contracts do not need regenerating: the export test and `docuconfCheck` ignore only
+   `metadata.generator.version`.
+3. release-please tags the merge commit `vX.Y.Z` and creates the GitHub release with the changelog entries.
 4. `.github/workflows/release.yml` checks the tag against `VERSION_NAME`, runs the tests (including
    `cue vet` against `docuconf/docuconf-go`'s meta-schema) and runs `publishToMavenCentral`.
 5. In the Central Portal, open Deployments, check the files and signatures, and press **Publish**. To
    release without this step, change the workflow to `publishAndReleaseToMavenCentral`.
+6. Move the version back to a `-SNAPSHOT` in a follow-up PR (release-please does not do this): on every
+   `x-release-please-version` line, set the next version with `-SNAPSHOT`, except `Docuconf.VERSION`, which takes
+   it without (`ExportTest.versionMatchesBuild` fails if they differ). The next release PR replaces them all.
+
+**First release only:** just before merging the first release PR, merge a PR into `main` that rewrites the README's
+Install section for the registry coordinates (Maven Central, and the Gradle Plugin Portal once the plugin is published
+there) instead of `publishToMavenLocal`. Keep `x-release-please-version` on each line that names the version;
+release-please then refreshes the release PR, which writes the release version into them.
+
+Dropped from the pre-release-please steps, because release-please or the checks now cover them: setting the
+release version by hand (the release PR does it), regenerating the golden contract when the version changes (its
+comparisons ignore `metadata.generator.version`) and `git tag` / `git push` (release-please tags the merge commit).
+
+If the release PR was created with `GITHUB_TOKEN` (no release GitHub App configured), the tag does not trigger
+`release.yml` by itself, so `.github/workflows/release-please.yml` starts it with `gh workflow run`.
 
 A deployment that fails validation can be dropped in the Portal (or with
-`./gradlew dropMavenCentralDeployment`) and the tag re-pushed after fixing it.
+`./gradlew dropMavenCentralDeployment`) and the release workflow re-run on the tag after fixing it
+(`gh workflow run release.yml --ref vX.Y.Z`).
 
 ## docuconf-go version
 

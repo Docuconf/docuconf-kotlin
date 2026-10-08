@@ -2,6 +2,10 @@
 # What the README tells a first-time user to run, in this project. CI runs it.
 set -euo pipefail
 cd "$(dirname "$0")"
+# The committed contract.cue is current: docuconfCheck compares everything but
+# metadata.generator.version, which release PRs bump. (It runs again in `check`
+# below, after the export has rewritten the file.)
+./gradlew docuconfCheck
 ./gradlew docuconfExport
 ./gradlew check
 ./gradlew installDist
@@ -12,4 +16,3 @@ set -e
 cat build/bad-start.txt
 [ "$status" -eq 1 ]
 diff -u expected-bad-start.txt build/bad-start.txt
-git diff --exit-code -- contract.cue

@@ -34,8 +34,9 @@ class AppConfigTest {
 
     @Test
     fun theContractIsCurrent() {
-        // The same check as `./gradlew docuconfCheck`, as a unit test.
+        // The same check as `./gradlew docuconfCheck`, as a unit test: it ignores only
+        // metadata.generator.version, the docuconf version that wrote the file.
         val committed = java.io.File("contract.cue").readText()
-        assertEquals(committed, Docuconf.exportCue(AppConfig::class))
+        assertEquals(Docuconf.withoutGeneratorVersion(committed), Docuconf.withoutGeneratorVersion(Docuconf.exportCue(AppConfig::class)))
     }
 }

@@ -119,7 +119,7 @@ internal class ServiceSettings(val name: String?, val prefix: String, val baseSo
  */
 public object Docuconf {
     /** This library's version, recorded in `metadata.generator`. */
-    public const val VERSION: String = "0.1.0"
+    public const val VERSION: String = "0.1.0" // x-release-please-version
 
     /** The SDK name recorded in `metadata.generator`. */
     public const val SDK: String = "docuconf-hoplite"
@@ -314,6 +314,27 @@ public object Docuconf {
     /** `contract.cue` for [type] (SPEC §4). Deterministic. */
     public fun exportCue(type: KClass<*>, service: String? = null, appVersion: String? = null, configure: DocuconfOptions.() -> Unit = {}): String =
         CueWriter.write(contract(type, service, appVersion, configure))
+
+    /**
+     * [cue], a contract as [exportCue] writes it, with the value of `metadata.generator.version` replaced by a
+     * placeholder and nothing else changed. That value is [VERSION], which changes with every release, so the
+     * checks that a committed contract is current compare through this: `Export --check`, the Gradle plugin's
+     * `docuconfCheck` and the README's unit test. Any other difference still fails them.
+     */
+    public fun withoutGeneratorVersion(cue: String): String {
+        var inMetadata = false
+        return cue.split('\n').joinToString("\n") { line ->
+            when (line.removeSuffix("\r")) {
+                "\tmetadata: {" -> line.also { inMetadata = true }
+                "\t}" -> line.also { inMetadata = false }
+                else -> if (inMetadata) GENERATOR_VERSION.replace(line) { it.groupValues[1] + "\"<generator-version>\"" + it.groupValues[2] } else line
+            }
+        }
+    }
+
+    /** The `generator` line of `metadata`, as CueWriter writes it: group 1 is up to the version, group 2 after it. */
+    private val GENERATOR_VERSION =
+        Regex("""^(\t\tgenerator: \{language: "(?:[^"\\]|\\.)*", sdk: "(?:[^"\\]|\\.)*", version: )"(?:[^"\\]|\\.)*"(\}\r?)$""")
 
     /** Markdown documentation of every input of [type]. */
     public fun exportMarkdown(type: KClass<*>, service: String? = null, appVersion: String? = null, configure: DocuconfOptions.() -> Unit = {}): String =

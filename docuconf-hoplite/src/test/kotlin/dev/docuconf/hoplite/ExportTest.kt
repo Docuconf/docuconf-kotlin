@@ -3,6 +3,8 @@ package dev.docuconf.hoplite
 import com.sksamuel.hoplite.Secret
 import dev.docuconf.kotlin.core.DeclarationException
 import org.junit.jupiter.api.io.TempDir
+import java.io.OutputStream
+import java.io.PrintStream
 import java.net.URI
 import java.nio.file.Files
 import java.nio.file.Path
@@ -18,6 +20,10 @@ class ExportTest {
 
     private fun export() = Docuconf.exportCue(GatewayConfig::class, "gateway", configure = { warn = {} })
 
+    // metadata.generator.version is Docuconf.VERSION, which every release PR bumps, so comparisons with the
+    // committed golden file ignore its value, as `--check` does.
+    private fun withoutGeneratorVersion(cue: String) = Docuconf.withoutGeneratorVersion(cue)
+
     @Test
     fun matchesGolden() {
         val cue = export()
@@ -25,7 +31,50 @@ class ExportTest {
             Files.createDirectories(golden.parent)
             Files.writeString(golden, cue)
         }
-        assertEquals(Files.readString(golden), cue, "contract differs from $golden; rerun with UPDATE_GOLDEN=1 if intended")
+        assertEquals(withoutGeneratorVersion(Files.readString(golden)), withoutGeneratorVersion(cue), "contract differs from $golden; rerun with UPDATE_GOLDEN=1 if intended")
+    }
+
+    @Test
+    fun goldenComparisonIgnoresOnlyTheGeneratorVersion() {
+        val cue = export()
+        val bumped = cue.replaceFirst("\"${Docuconf.VERSION}\"", "\"99.0.0\"")
+        assertTrue(bumped != cue)
+        assertEquals(withoutGeneratorVersion(cue), withoutGeneratorVersion(bumped))
+        assertTrue(withoutGeneratorVersion(cue.replace("docuconf-hoplite", "other")) != withoutGeneratorVersion(cue))
+    }
+
+    @Test
+    fun checkIgnoresOnlyTheGeneratorVersion(@TempDir dir: Path) {
+        val file = dir.resolve("contract.cue")
+        val quiet = PrintStream(OutputStream.nullOutputStream())
+        fun check(committed: String, vararg extra: String): Int {
+            Files.writeString(file, committed)
+            val args = arrayOf("--class", GatewayConfig::class.java.name, "--service", "gateway", "--out", file.toString(), *extra, "--check")
+            return export(args, quiet, quiet)
+        }
+        val fresh = export()
+        val version = "version: \"${Docuconf.VERSION}\"}"
+        assertContains(fresh, "\t\tgenerator: {language: \"kotlin\", sdk: \"docuconf-hoplite\", $version\n")
+        assertEquals(0, check(fresh))
+
+        // A contract committed before a release PR bumped Docuconf.VERSION is still current.
+        assertEquals(0, check(fresh.replace(version, "version: \"0.0.1\"}")))
+        assertEquals(0, check(fresh.replace(version, "version: \"99.1.0-SNAPSHOT\"}")))
+
+        // Any other difference is still stale, including the rest of the generator and a version elsewhere.
+        val bumped = fresh.replace(version, "version: \"0.0.1\"}")
+        assertEquals(1, check(bumped.replace("sdk: \"docuconf-hoplite\"", "sdk: \"other\"")))
+        assertEquals(1, check(bumped.replace("language: \"kotlin\"", "language: \"java\"")))
+        assertEquals(1, check(bumped.replace("name: \"gateway\"", "name: \"other\"")))
+        assertEquals(1, check(bumped.replaceFirst("description: \"", "description: \"An ")))
+        assertEquals(1, check(bumped + "\n"))
+        assertEquals(1, check(bumped, "--app-version", "1.4.0"))
+        val withApp = Docuconf.exportCue(GatewayConfig::class, "gateway", "1.4.0") { warn = {} }
+        assertEquals(0, check(withApp, "--app-version", "1.4.0"))
+        assertEquals(1, check(withApp.replace("appVersion: \"1.4.0\"", "appVersion: \"1.3.0\""), "--app-version", "1.4.0"))
+        // Only metadata's generator: the same line anywhere else keeps its version.
+        val outside = fresh.replace("\tvars: {\n", "\tvars: {\n\t\tgenerator: {language: \"kotlin\", sdk: \"docuconf-hoplite\", version: \"1\"}\n")
+        assertTrue(Docuconf.withoutGeneratorVersion(outside) != Docuconf.withoutGeneratorVersion(outside.replace("version: \"1\"}", "version: \"2\"}")))
     }
 
     @Test
@@ -180,7 +229,7 @@ class ExportTest {
         val out = dir.resolve("contract.cue")
         val md = dir.resolve("CONFIG.md")
         assertEquals(0, export(arrayOf("--class", GatewayConfig::class.java.name, "--service", "gateway", "--out", out.toString(), "--markdown", md.toString()), System.out, System.err))
-        assertEquals(Files.readString(golden), Files.readString(out))
+        assertEquals(withoutGeneratorVersion(Files.readString(golden)), withoutGeneratorVersion(Files.readString(out)))
         assertContains(Files.readString(md), "# gateway configuration")
     }
 }

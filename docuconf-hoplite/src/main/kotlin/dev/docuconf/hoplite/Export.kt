@@ -19,7 +19,8 @@ and base config files come from the class's @DocuconfService annotation.
   --out <file>          where to write contract.cue (default: stdout)
   --markdown <file>     also write Markdown docs of every input
   --check               do not write: exit 1 with a diff when --out (and --markdown) differ
-                        from a fresh export, for CI
+                        from a fresh export, for CI. The value of metadata.generator.version
+                        (this library's version) is not compared
   --help                print this help"""
 
 /**
@@ -79,10 +80,12 @@ internal fun export(args: Array<String>, out: PrintStream, err: PrintStream): In
     val outFile = opts["out"]?.single()
     val markdownFile = opts["markdown"]?.single()
     if (check && outFile == null) return usage("--check needs --out, the committed contract to compare with")
+    // Each output with the form --check compares: the contract without its generator version, which
+    // changes with every release of this library; the Markdown as is.
     val outputs = try {
         listOfNotNull(
-            (outFile ?: "-") to Docuconf.exportCue(type, service, appVersion) { warn = { err.println("docuconf: warning: $it") } },
-            markdownFile?.let { it to Docuconf.exportMarkdown(type, service, appVersion) { warn = {} } },
+            Output(outFile ?: "-", Docuconf.exportCue(type, service, appVersion) { warn = { err.println("docuconf: warning: $it") } }, Docuconf::withoutGeneratorVersion),
+            markdownFile?.let { Output(it, Docuconf.exportMarkdown(type, service, appVersion) { warn = {} }) { text -> text } },
         )
     } catch (e: DeclarationException) {
         err.println("docuconf: " + e.message)
@@ -93,16 +96,18 @@ internal fun export(args: Array<String>, out: PrintStream, err: PrintStream): In
         return 0
     }
     var stale = false
-    for ((file, text) in outputs) {
+    for ((file, text, compared) in outputs) {
         val path = Path.of(file)
         val current = if (Files.exists(path)) Files.readString(path) else null
-        if (current == text) continue
+        if (current != null && compared(current) == compared(text)) continue
         stale = true
         err.println("docuconf: $file is out of date with ${type.simpleName}; re-run the export and commit the result")
         err.print(LineDiff.unified(current ?: "", text, file))
     }
     return if (stale) 1 else 0
 }
+
+private data class Output(val file: String, val text: String, val compared: (String) -> String)
 
 /** A minimal line diff for `--check` output: the changed lines, with a little context. */
 internal object LineDiff {
