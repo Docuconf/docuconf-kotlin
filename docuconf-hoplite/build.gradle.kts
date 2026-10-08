@@ -3,6 +3,8 @@ import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 plugins {
     alias(libs.plugins.kotlin.jvm)
     alias(libs.plugins.maven.publish)
+    // API docs for the javadoc jar (the maven-publish plugin uses Dokka when it is applied).
+    alias(libs.plugins.dokka)
 }
 
 java {

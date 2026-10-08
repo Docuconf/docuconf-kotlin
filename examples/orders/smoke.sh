@@ -41,5 +41,21 @@ cat "$log"
 [ "$status" -ne 0 ] || fail "the app exited 0"
 grep -q missing_required "$log" || fail "no missing_required in the output"
 grep -q out_of_range "$log" || fail "no out_of_range in the output"
+grep -qx 'docuconf: 2 configuration problems:' "$log" || fail "no report header in the output"
+if grep -q -e Exception -e '^\s*at ' "$log"; then fail "the output has a stack trace"; fi
+[ "$status" -eq 1 ] || fail "the app exited $status, not 1"
+
+echo "== lowercase LOG_LEVEL and Go-style REQUEST_TIMEOUT"
+env -i PATH="$PATH" JAVA_HOME="${JAVA_HOME:-}" PORT="$port" DATABASE_URL="$secret" LOG_LEVEL=debug REQUEST_TIMEOUT=1m30s "$app" >"$log" 2>&1 &
+pid=$!
+for _ in $(seq 1 60); do
+  curl -fsS "http://127.0.0.1:$port/healthz" >/dev/null 2>&1 && break
+  kill -0 "$pid" 2>/dev/null || fail "the app exited during startup"
+  sleep 0.5
+done
+config="$(curl -fsS "http://127.0.0.1:$port/config")" || fail "GET /config failed"
+case "$config" in *'"LOG_LEVEL":"debug"'*'"REQUEST_TIMEOUT":"1m30s"'*) ;; *) fail "unexpected /config: $config" ;; esac
+if grep -q sealed "$log"; then fail "Hoplite's sealed-type notice was printed"; fi
+kill "$pid"; wait "$pid" 2>/dev/null || true; pid=
 
 echo "smoke: ok"

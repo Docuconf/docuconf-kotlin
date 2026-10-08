@@ -18,11 +18,14 @@ public object ValueChecks {
      * @property trimListItems whether the host trims whitespace around csv items (Hoplite does).
      * @property hostDuration an extra duration parser for forms the host also accepts (Hoplite's `30s`).
      * @property lenientBools other strings the host accepts as booleans (Hoplite: t, f, 1, 0, yes, no).
+     * @property durationHint the forms named when a duration does not parse, when the host accepts more
+     *   than the encoding (`an ISO 8601 duration like PT30S, or Go syntax like 30s`).
      */
     public data class Options(
         val trimListItems: Boolean = false,
         val hostDuration: ((String) -> Long?)? = null,
         val lenientBools: Set<String> = emptySet(),
+        val durationHint: String? = null,
     )
 
     /** Whether a raw value counts as unset: absent, or empty for any type except string (SPEC §5). */
@@ -202,17 +205,18 @@ public object ValueChecks {
         fun checkDuration(): Long? {
             val nanos = parseDuration(raw, spec.durationEncoding, options.hostDuration)
             if (nanos == null) {
-                val example = when (spec.durationEncoding) {
-                    DurationEncoding.GO -> "1m30s"
-                    DurationEncoding.ISO8601 -> "PT1M30S"
-                    DurationEncoding.SECONDS -> "90"
-                    DurationEncoding.TIMESPAN -> "00:01:30"
+                val expected = options.durationHint ?: when (spec.durationEncoding) {
+                    DurationEncoding.GO -> "a Go duration like 1m30s"
+                    DurationEncoding.ISO8601 -> "an ISO 8601 duration like PT30S"
+                    DurationEncoding.SECONDS -> "a number of seconds like 90"
+                    DurationEncoding.TIMESPAN -> "a timespan like 00:01:30"
                 }
-                add(Codes.INVALID_TYPE, "$shown is not a duration such as $example")
+                add(Codes.INVALID_TYPE, "$shown is not a duration; expected $expected")
                 return null
             }
-            spec.minDuration?.let { if (nanos < Durations.parseGo(it)!!) add(Codes.OUT_OF_RANGE, "$shown is shorter than min $it") }
-            spec.maxDuration?.let { if (nanos > Durations.parseGo(it)!!) add(Codes.OUT_OF_RANGE, "$shown is longer than max $it") }
+            // Bounds that are not Go syntax are a declaration error, reported by DeclarationChecks.
+            spec.minDuration?.let { b -> Durations.parseGo(b)?.let { if (nanos < it) add(Codes.OUT_OF_RANGE, "$shown is shorter than min $b") } }
+            spec.maxDuration?.let { b -> Durations.parseGo(b)?.let { if (nanos > it) add(Codes.OUT_OF_RANGE, "$shown is longer than max $b") } }
             return nanos
         }
 
@@ -221,10 +225,16 @@ public object ValueChecks {
                 add(Codes.INVALID_TYPE, "$shown is not a URL of the form scheme://...")
                 return null
             }
-            val schemes = spec.schemes ?: return raw
             val scheme = raw.substringBefore("://")
-            if (scheme !in schemes) {
+            val schemes = spec.schemes
+            if (schemes != null && scheme !in schemes) {
                 add(Codes.INVALID_SCHEME, "scheme ${quote(scheme)} is not one of ${schemes.joinToString(", ")}")
+                return raw
+            }
+            // The URL as it is; a secret reports its length, never its value.
+            spec.maxLength?.let {
+                val length = codePointCount(raw)
+                if (length > it) add(Codes.OUT_OF_RANGE, "$shown is $length characters, above maxLength $it")
             }
             return raw
         }
@@ -287,6 +297,16 @@ public object ValueChecks {
         }
 
         fun finishList(items: List<Any?>): List<Any>? {
+            // Each item of a string list after splitting, so a csv separator is never counted.
+            if (spec.itemMinLength != null || spec.itemMaxLength != null) {
+                items.forEachIndexed { i, x ->
+                    if (x !is String) return@forEachIndexed
+                    val length = codePointCount(x)
+                    val label = itemLabel(i, x)
+                    spec.itemMinLength?.let { if (length < it) add(Codes.OUT_OF_RANGE, "$label is $length characters, below itemMinLength $it") }
+                    spec.itemMaxLength?.let { if (length > it) add(Codes.OUT_OF_RANGE, "$label is $length characters, above itemMaxLength $it") }
+                }
+            }
             items.forEachIndexed { i, x ->
                 if (x !is Long) return@forEachIndexed
                 val label = if (spec.secret) "item $i" else "item $i ($x)"
@@ -305,6 +325,11 @@ public object ValueChecks {
                 add(Codes.INVALID_TYPE, "is not valid JSON: ${e.message}")
                 return null
             }
+            // The value as received, whitespace included, not re-encoded (SPEC §4.3).
+            jsonMaxLength(spec, raw)?.let {
+                out += it
+                return null
+            }
             val schema = spec.schema ?: return parsed
             for (problem in JsonSchemaValidator.validate(schema, parsed)) {
                 add(Codes.SCHEMA_MISMATCH, if (spec.secret) "does not match its schema at ${problem.path}" else problem.toString())
@@ -314,6 +339,17 @@ public object ValueChecks {
     }
 
     private val truthy = setOf("t", "1", "yes")
+
+    /**
+     * Checks a json value's wire string against `maxLength` (SPEC §4.3): the raw value as received,
+     * or the compact JSON of a value that has no wire string, such as one from a config-file overlay.
+     * Returns the violation, or null when it fits.
+     */
+    public fun jsonMaxLength(spec: VarSpec, wire: String): Violation? {
+        val max = spec.maxLength ?: return null
+        val length = codePointCount(wire)
+        return if (length > max) Violation(Codes.OUT_OF_RANGE, spec.name, "is $length characters of JSON, above maxLength $max") else null
+    }
 
     internal fun quote(s: String): String = buildString { quoteJson(s, this) }
 

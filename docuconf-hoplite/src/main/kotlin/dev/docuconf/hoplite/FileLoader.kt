@@ -130,8 +130,8 @@ internal class FileLoader(
         }
         val value = try {
             ConfigLoaderBuilder.defaultWithoutPropertySources()
-                .addDecoder(KotlinDurationDecoder())
-                .addDecoder(JsonVarDecoder())
+                .addDecoders(valueDecoders())
+                .apply { if (!hasSealedTypes(kclass)) explicitSealedTypes() }
                 .apply(hoplite)
                 .addPropertySource(source)
                 .build()

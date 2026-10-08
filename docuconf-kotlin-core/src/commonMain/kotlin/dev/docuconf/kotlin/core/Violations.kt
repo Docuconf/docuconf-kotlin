@@ -30,12 +30,21 @@ public data class Violation(val code: String, val input: String, val message: St
     override fun toString(): String = "$input: $code: $message"
 }
 
-/** Thrown at boot with every violation found, not just the first. */
+/**
+ * Thrown at boot with every violation found, not just the first. Its message is the report printed
+ * on a failed boot:
+ *
+ * ```
+ * docuconf: 2 configuration problems:
+ *   PORT: out_of_range: "0" is below min 1
+ *   DATABASE_URL: missing_required: required, but not set
+ * ```
+ */
 public class ConfigViolationException(public val violations: List<Violation>) :
     RuntimeException(format(violations)) {
     public companion object {
         public fun format(violations: List<Violation>): String =
-            "invalid configuration (${violations.size} problem${if (violations.size == 1) "" else "s"}):\n" +
-                violations.joinToString("\n") { "  - $it" }
+            "docuconf: ${violations.size} configuration problem${if (violations.size == 1) "" else "s"}:\n" +
+                violations.joinToString("\n") { "  $it" }
     }
 }

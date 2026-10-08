@@ -1,8 +1,10 @@
 # Releasing
 
-Two artifacts go to Maven Central through the [Central Portal](https://central.sonatype.com):
+Three artifacts go to Maven Central through the [Central Portal](https://central.sonatype.com):
 `dev.docuconf:docuconf-kotlin-core` (Kotlin Multiplatform: the root module plus
-`docuconf-kotlin-core-jvm`) and `dev.docuconf:docuconf-hoplite`. Publishing uses the
+`docuconf-kotlin-core-jvm`), `dev.docuconf:docuconf-hoplite` and `dev.docuconf:docuconf-ktor`. The
+`dev.docuconf` Gradle plugin (`docuconf-gradle-plugin/`, an included build) goes to the Gradle Plugin
+Portal; its publishing (`com.gradle.plugin-publish` and a Portal key) is not set up yet. Publishing uses the
 [vanniktech maven-publish plugin](https://vanniktech.github.io/gradle-maven-publish-plugin/central/),
 which uploads to the Central Portal and signs with an in-memory GPG key.
 
@@ -48,17 +50,35 @@ place; Central rejects POMs without `<licenses>`.
 Releases are automated with [release-please](https://github.com/googleapis/release-please); see
 [CONTRIBUTING.md](CONTRIBUTING.md#how-releases-happen) for the commit conventions it reads.
 
-1. Optionally, check out the open release PR (`chore(main): release X.Y.Z`), run
-   `./gradlew check publishToMavenLocal` and try the artifacts from `~/.m2` in a sample app.
-2. Merge the release PR. It already sets `VERSION_NAME` in `gradle.properties` and `Docuconf.VERSION` in
-   `docuconf-hoplite/src/main/kotlin/dev/docuconf/hoplite/Docuconf.kt` to the new version, and updates
-   `CHANGELOG.md`. The golden contract and the example contract do not need regenerating: their comparisons ignore
+Between releases `VERSION_NAME` is a `-SNAPSHOT` (`0.1.0-SNAPSHOT`), so `publishToMavenLocal` never writes a
+release version into anyone's `~/.m2`.
+
+1. Check out the open release PR (`chore(main): release X.Y.Z`), run `./gradlew check publishToMavenLocal` and try
+   the artifacts from `~/.m2` in a sample app.
+2. Merge the release PR. It already sets the release version, without `-SNAPSHOT`, everywhere it is written: on
+   every `x-release-please-version` line of the files under `extra-files` in `release-please-config.json`
+   (`VERSION_NAME` in `gradle.properties` and `docuconf-gradle-plugin/gradle.properties`, `Docuconf.VERSION` in
+   `docuconf-hoplite/src/main/kotlin/dev/docuconf/hoplite/Docuconf.kt`, the dependency in `README.md` and
+   `examples/consumer/build.gradle.kts`), and it updates `CHANGELOG.md`. The golden contract and the example
+   contracts do not need regenerating: the export test and `docuconfCheck` ignore only
    `metadata.generator.version`.
 3. release-please tags the merge commit `vX.Y.Z` and creates the GitHub release with the changelog entries.
 4. `.github/workflows/release.yml` checks the tag against `VERSION_NAME`, runs the tests (including
    `cue vet` against `docuconf/docuconf-go`'s meta-schema) and runs `publishToMavenCentral`.
 5. In the Central Portal, open Deployments, check the files and signatures, and press **Publish**. To
    release without this step, change the workflow to `publishAndReleaseToMavenCentral`.
+6. Move the version back to a `-SNAPSHOT` in a follow-up PR (release-please does not do this): on every
+   `x-release-please-version` line, set the next version with `-SNAPSHOT`, except `Docuconf.VERSION`, which takes
+   it without (`ExportTest.versionMatchesBuild` fails if they differ). The next release PR replaces them all.
+
+**First release only:** just before merging the first release PR, merge a PR into `main` that rewrites the README's
+Install section for the registry coordinates (Maven Central, and the Gradle Plugin Portal once the plugin is published
+there) instead of `publishToMavenLocal`. Keep `x-release-please-version` on each line that names the version;
+release-please then refreshes the release PR, which writes the release version into them.
+
+Dropped from the pre-release-please steps, because release-please or the checks now cover them: setting the
+release version by hand (the release PR does it), regenerating the golden contract when the version changes (its
+comparisons ignore `metadata.generator.version`) and `git tag` / `git push` (release-please tags the merge commit).
 
 If the release PR was created with `GITHUB_TOKEN` (no release GitHub App configured), the tag does not trigger
 `release.yml` by itself, so `.github/workflows/release-please.yml` starts it with `gh workflow run`.

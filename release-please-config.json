@@ -64,7 +64,10 @@
       "include-component-in-tag": false,
       "extra-files": [
         "gradle.properties",
-        "docuconf-hoplite/src/main/kotlin/dev/docuconf/hoplite/Docuconf.kt"
+        "docuconf-gradle-plugin/gradle.properties",
+        "docuconf-hoplite/src/main/kotlin/dev/docuconf/hoplite/Docuconf.kt",
+        "README.md",
+        "examples/consumer/build.gradle.kts"
       ]
     }
   }

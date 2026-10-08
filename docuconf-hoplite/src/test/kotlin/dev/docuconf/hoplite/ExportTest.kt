@@ -3,6 +3,9 @@ package dev.docuconf.hoplite
 import com.sksamuel.hoplite.Secret
 import dev.docuconf.kotlin.core.DeclarationException
 import org.junit.jupiter.api.io.TempDir
+import java.io.OutputStream
+import java.io.PrintStream
+import java.net.URI
 import java.nio.file.Files
 import java.nio.file.Path
 import kotlin.test.Test
@@ -18,10 +21,8 @@ class ExportTest {
     private fun export() = Docuconf.exportCue(GatewayConfig::class, "gateway", configure = { warn = {} })
 
     // metadata.generator.version is Docuconf.VERSION, which every release PR bumps, so comparisons with the
-    // committed golden file ignore its value.
-    private val generatorVersion = Regex("""(generator:\s*\{[^{}]*?\bversion:\s*)"[^"]*"""")
-
-    private fun withoutGeneratorVersion(cue: String) = cue.replace(generatorVersion, "$1\"<generator-version>\"")
+    // committed golden file ignore its value, as `--check` does.
+    private fun withoutGeneratorVersion(cue: String) = Docuconf.withoutGeneratorVersion(cue)
 
     @Test
     fun matchesGolden() {
@@ -43,8 +44,42 @@ class ExportTest {
     }
 
     @Test
+    fun checkIgnoresOnlyTheGeneratorVersion(@TempDir dir: Path) {
+        val file = dir.resolve("contract.cue")
+        val quiet = PrintStream(OutputStream.nullOutputStream())
+        fun check(committed: String, vararg extra: String): Int {
+            Files.writeString(file, committed)
+            val args = arrayOf("--class", GatewayConfig::class.java.name, "--service", "gateway", "--out", file.toString(), *extra, "--check")
+            return export(args, quiet, quiet)
+        }
+        val fresh = export()
+        val version = "version: \"${Docuconf.VERSION}\"}"
+        assertContains(fresh, "\t\tgenerator: {language: \"kotlin\", sdk: \"docuconf-hoplite\", $version\n")
+        assertEquals(0, check(fresh))
+
+        // A contract committed before a release PR bumped Docuconf.VERSION is still current.
+        assertEquals(0, check(fresh.replace(version, "version: \"0.0.1\"}")))
+        assertEquals(0, check(fresh.replace(version, "version: \"99.1.0-SNAPSHOT\"}")))
+
+        // Any other difference is still stale, including the rest of the generator and a version elsewhere.
+        val bumped = fresh.replace(version, "version: \"0.0.1\"}")
+        assertEquals(1, check(bumped.replace("sdk: \"docuconf-hoplite\"", "sdk: \"other\"")))
+        assertEquals(1, check(bumped.replace("language: \"kotlin\"", "language: \"java\"")))
+        assertEquals(1, check(bumped.replace("name: \"gateway\"", "name: \"other\"")))
+        assertEquals(1, check(bumped.replaceFirst("description: \"", "description: \"An ")))
+        assertEquals(1, check(bumped + "\n"))
+        assertEquals(1, check(bumped, "--app-version", "1.4.0"))
+        val withApp = Docuconf.exportCue(GatewayConfig::class, "gateway", "1.4.0") { warn = {} }
+        assertEquals(0, check(withApp, "--app-version", "1.4.0"))
+        assertEquals(1, check(withApp.replace("appVersion: \"1.4.0\"", "appVersion: \"1.3.0\""), "--app-version", "1.4.0"))
+        // Only metadata's generator: the same line anywhere else keeps its version.
+        val outside = fresh.replace("\tvars: {\n", "\tvars: {\n\t\tgenerator: {language: \"kotlin\", sdk: \"docuconf-hoplite\", version: \"1\"}\n")
+        assertTrue(Docuconf.withoutGeneratorVersion(outside) != Docuconf.withoutGeneratorVersion(outside.replace("version: \"1\"}", "version: \"2\"}")))
+    }
+
+    @Test
     fun versionMatchesBuild() {
-        assertEquals(System.getProperty("docuconf.version"), Docuconf.VERSION)
+        assertEquals(System.getProperty("docuconf.version").removeSuffix("-SNAPSHOT"), Docuconf.VERSION)
     }
 
     @Test
@@ -56,8 +91,8 @@ class ExportTest {
     fun namesFollowHopliteEnvironmentSource() {
         val names = Docuconf.contract(GatewayConfig::class, "gateway") { warn = {} }.vars.map { it.name }.toSet()
         // Nesting is "_"; within one level Hoplite drops "_" and "-" and ignores case.
-        assertTrue("PUBLICURL" in names, names.toString())
-        assertTrue("DB_POOLSIZE" in names, names.toString())
+        assertTrue("PUBLIC_URL" in names, names.toString())
+        assertTrue("DB_POOL_SIZE" in names, names.toString())
         assertTrue("POD_NAMESPACE" in names, names.toString())
         assertTrue("PARTNER_PASSWORD" in names, names.toString())
         assertTrue("VAULTTOKEN" !in names, "@NotInContract parameters stay out")
@@ -94,7 +129,7 @@ class ExportTest {
         assertContains(assertFailsWith<DeclarationException> { Docuconf.contract(ShortDoc::class, "svc") }.message!!, "at least 5")
 
         data class Clash(@Doc("Listen port") val httpPort: Int = 1, @Doc("Same name") val http_port: Int = 2)
-        assertContains(assertFailsWith<DeclarationException> { Docuconf.contract(Clash::class, "svc") }.message!!, "more than once")
+        assertContains(assertFailsWith<DeclarationException> { Docuconf.contract(Clash::class, "svc") }.message!!, "Clash.httpPort and Clash.http_port all read HTTP_PORT")
 
         data class Watch(
             @Doc("Licence key") @FileInput(name = "license", path = "/etc/svc/license.key") val license: TextFile,
@@ -132,6 +167,31 @@ class ExportTest {
     }
 
     @Test
+    fun lengthLimitsAreExported(@TempDir dir: Path) {
+        data class Limits(val max: Int)
+        data class Batch(
+            @Doc("Where to report each run") @Schemes("https") @Length(max = 24) val callback: URI? = null,
+            @Doc("Run limits as a JSON object") @Length(max = 16) val limits: Json<Limits>? = null,
+            @Doc("Branch codes, two to four characters each") @ItemLength(min = 2, max = 4) val branches: List<String> = listOf("ZÜ01", "BE"),
+        )
+        val c = Docuconf.contract(Batch::class, "svc")
+        assertEquals(24, c.variable("CALLBACK")!!.maxLength)
+        assertEquals(16, c.variable("LIMITS")!!.maxLength)
+        assertEquals(2 to 4, c.variable("BRANCHES")!!.let { it.itemMinLength to it.itemMaxLength })
+        val cue = Docuconf.exportCue(Batch::class, "svc")
+        assertContains(cue, "itemMinLength: 2")
+        val (exit, out) = Cue.run(Cue.module(dir, cue), dir, "vet", "-c", "./svc")
+        assertEquals(0, exit, "cue vet -c failed:\n$out")
+
+        data class IntItems(@Doc("Worker ports") @ItemLength(max = 4) val ports: List<Int> = emptyList())
+        assertContains(assertFailsWith<DeclarationException> { Docuconf.contract(IntItems::class, "svc") }.message!!, "@ItemLength only applies to List<String>")
+        data class MinOnUrl(@Doc("Callback URL") @Length(min = 1) val hook: URI? = null)
+        assertContains(assertFailsWith<DeclarationException> { Docuconf.contract(MinOnUrl::class, "svc") }.message!!, "minLength only applies to strings")
+        data class BadDefault(@Doc("Branch codes") @ItemLength(max = 4) val codes: List<String> = listOf("BE", "ZÜRICH"))
+        assertContains(assertFailsWith<DeclarationException> { Docuconf.contract(BadDefault::class, "svc") }.message!!, "above itemMaxLength 4")
+    }
+
+    @Test
     fun warnsAboutFeatureFlags() {
         data class Flags(val enable: Enable = Enable())
         val warnings = ArrayList<String>()
@@ -145,7 +205,7 @@ class ExportTest {
         Files.writeString(base, "port: 9000\ndb:\n  poolSize: 20\n")
         val c = Docuconf.contract(GatewayConfig::class, "gateway") { baseSources = listOf(base.toString()); warn = {} }
         assertEquals("9000", c.variable("PORT")!!.default.toString())
-        assertEquals("20", c.variable("DB_POOLSIZE")!!.default.toString())
+        assertEquals("20", c.variable("DB_POOL_SIZE")!!.default.toString())
     }
 
     @Test
@@ -168,7 +228,7 @@ class ExportTest {
     fun commandLineExport(@TempDir dir: Path) {
         val out = dir.resolve("contract.cue")
         val md = dir.resolve("CONFIG.md")
-        main(arrayOf("--class", GatewayConfig::class.java.name, "--service", "gateway", "--out", out.toString(), "--markdown", md.toString()))
+        assertEquals(0, export(arrayOf("--class", GatewayConfig::class.java.name, "--service", "gateway", "--out", out.toString(), "--markdown", md.toString()), System.out, System.err))
         assertEquals(withoutGeneratorVersion(Files.readString(golden)), withoutGeneratorVersion(Files.readString(out)))
         assertContains(Files.readString(md), "# gateway configuration")
     }

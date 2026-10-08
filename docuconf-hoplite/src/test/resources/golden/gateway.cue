@@ -11,7 +11,7 @@ contract.#Contract & {
 		generator: {language: "kotlin", sdk: "docuconf-hoplite", version: "0.1.0"}
 	}
 	vars: {
-		ADMINPORTS: {
+		ADMIN_PORTS: {
 			type: "list"
 			description: "Extra ports that serve the admin API"
 			configKey: "adminPorts"
@@ -38,7 +38,7 @@ contract.#Contract & {
 			configKey: "compress"
 			default: true
 		}
-		DB_POOLSIZE: {
+		DB_POOL_SIZE: {
 			type: "int"
 			description: "Connection pool size"
 			group: "database"
@@ -63,7 +63,7 @@ contract.#Contract & {
 			encoding: "iso8601"
 			default: "1m30s"
 		}
-		LEGACYPORT: {
+		LEGACY_PORT: {
 			type: "int"
 			description: "Old name of the listen port"
 			configKey: "legacyPort"
@@ -71,7 +71,7 @@ contract.#Contract & {
 			min: -2147483648
 			max: 2147483647
 		}
-		LOGLEVEL: {
+		LOG_LEVEL: {
 			type: "enum"
 			description: "Minimum log level emitted"
 			configKey: "logLevel"
@@ -99,14 +99,14 @@ contract.#Contract & {
 			max: 65535
 			default: 8080
 		}
-		PUBLICURL: {
+		PUBLIC_URL: {
 			type: "url"
 			description: "Public base URL of the gateway"
 			required: true
 			configKey: "publicUrl"
 			schemes: ["https"]
 		}
-		RATELIMITS: {
+		RATE_LIMITS: {
 			type: "json"
 			description: "Default per-client rate limits"
 			configKey: "rateLimits"
@@ -155,7 +155,7 @@ contract.#Contract & {
 			max: "5m"
 			default: "30s"
 		}
-		TRACERATIO: {
+		TRACE_RATIO: {
 			type: "float"
 			description: "Fraction of requests to trace"
 			configKey: "traceRatio"

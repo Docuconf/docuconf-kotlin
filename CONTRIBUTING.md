@@ -31,12 +31,14 @@ Commits on their own branches can say anything: only the PR title reaches `main`
 Releases are automated with [release-please](https://github.com/googleapis/release-please).
 
 1. Every push to `main` updates one open release PR, titled like `chore(main): release X.Y.Z`. It bumps the version
-   from the commit types above, updates `VERSION_NAME` in `gradle.properties` and `Docuconf.VERSION` in
-   `docuconf-hoplite/src/main/kotlin/dev/docuconf/hoplite/Docuconf.kt` (written into exported contracts as
-   `metadata.generator.version`), and adds the new entries to `CHANGELOG.md`.
+   from the commit types above, sets it on every `x-release-please-version` line (`VERSION_NAME` in both
+   `gradle.properties` files, `Docuconf.VERSION` in `docuconf-hoplite/src/main/kotlin/dev/docuconf/hoplite/Docuconf.kt`,
+   which is written into exported contracts as `metadata.generator.version`, and the README's install line), and
+   adds the new entries to `CHANGELOG.md`.
 2. A maintainer ships a release by merging the release PR. Nothing is released until then, and the PR can wait
    while more changes land: it updates itself.
 3. Merging it tags the commit `vX.Y.Z` and creates the GitHub release with the changelog entries.
    `.github/workflows/release.yml` then runs the tests and uploads a deployment to the Maven Central Portal.
+4. A follow-up PR moves the version back to the next `-SNAPSHOT` (see [RELEASING.md](RELEASING.md#each-release)).
 
 See [RELEASING.md](RELEASING.md) for the one-time setup.

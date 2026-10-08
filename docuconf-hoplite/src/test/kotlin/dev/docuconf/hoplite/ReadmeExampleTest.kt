@@ -11,7 +11,7 @@ import kotlin.test.assertContains
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 
-// The example in README.md, kept compiling and passing here.
+// An end-to-end load with every kind of input: env variables, a TLS key pair and a config file.
 
 data class ExampleDatabase(
     @Doc("Postgres connection string") @Schemes("postgres") val url: Secret,
@@ -55,10 +55,10 @@ class ReadmeExampleTest {
             Docuconf.load<AppConfig> { this.env = env + mapOf("PORT" to "0", "DB_URL" to "mysql://app:pw@db/app", "TIMEOUT" to "PT5M"); terminationLog = "$root/log" }
         }
         val expected = """
-            invalid configuration (3 problems):
-              - PORT: out_of_range: "0" is below min 1
-              - TIMEOUT: out_of_range: "PT5M" is longer than max 1m
-              - DB_URL: invalid_scheme: scheme "mysql" is not one of postgres
+            docuconf: 3 configuration problems:
+              PORT: out_of_range: "0" is below min 1
+              TIMEOUT: out_of_range: "PT5M" is longer than max 1m
+              DB_URL: invalid_scheme: scheme "mysql" is not one of postgres
         """.trimIndent()
         assertEquals(expected, e.message)
 

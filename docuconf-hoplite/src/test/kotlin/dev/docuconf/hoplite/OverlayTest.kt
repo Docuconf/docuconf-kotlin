@@ -34,7 +34,7 @@ class OverlayTest {
         assertEquals(".", o.keySeparator)
         assertEquals("yaml", o.format.wire)
         assertEquals(Reload.RESTART, o.reload)
-        assertEquals("db.poolSize", c.variable("DB_POOLSIZE")!!.configKey)
+        assertEquals("db.poolSize", c.variable("DB_POOL_SIZE")!!.configKey)
         assertEquals("port", c.variable("PORT")!!.configKey)
         assertTrue(c.vars.all { it.configKey != null })
         assertContains(Docuconf.exportMarkdown(GatewayConfig::class, "gateway") { warn = {} }, "| `platform` | yaml | `/app/config/gateway.yaml` |")
@@ -79,9 +79,9 @@ class OverlayTest {
         w.write(overlay, "adminPorts: [9100, 9101]\n")
         assertEquals(listOf(9100, 9101), w.load().adminPorts)
         w.write(overlay, "adminPorts: [9100, 0]\n")
-        assertEquals(listOf("ADMINPORTS" to Codes.OUT_OF_RANGE), w.failure().violations.map { it.input to it.code })
+        assertEquals(listOf("ADMIN_PORTS" to Codes.OUT_OF_RANGE), w.failure().violations.map { it.input to it.code })
         w.write(overlay, "adminPorts: [9100, x]\n")
-        assertEquals(listOf("ADMINPORTS" to Codes.INVALID_TYPE), w.failure().violations.map { it.input to it.code })
+        assertEquals(listOf("ADMIN_PORTS" to Codes.INVALID_TYPE), w.failure().violations.map { it.input to it.code })
     }
 
     @Test
@@ -138,15 +138,15 @@ class OverlayTest {
         assertEquals(
             setOf(
                 "PORT:out_of_range",
-                "LOGLEVEL:not_in_enum",
+                "LOG_LEVEL:not_in_enum",
                 "BROKERS:too_few_items",
-                "ADMINPORTS:invalid_type",
+                "ADMIN_PORTS:invalid_type",
                 "TIMEOUT:out_of_range",
-                "RATELIMITS:schema_mismatch",
+                "RATE_LIMITS:schema_mismatch",
             ),
             e.violations.map { "${it.input}:${it.code}" }.toSet(),
         )
-        // PUBLICURL is set in the environment, which wins, so the overlay's bad value is not used or reported.
+        // PUBLIC_URL is set in the environment, which wins, so the overlay's bad value is not used or reported.
         val port = e.violations.single { it.input == "PORT" }
         assertEquals("\"70000\" is above max 65535 (from overlay platform, key port)", port.message)
         assertContains(Files.readString(w.terminationLog), "PORT: out_of_range")
@@ -155,11 +155,11 @@ class OverlayTest {
     @Test
     fun aMapWhereAScalarBelongsIsInvalid(@TempDir root: Path) {
         val w = World(root)
-        w.env.remove("PUBLICURL")
+        w.env.remove("PUBLIC_URL")
         w.write(overlay, "publicUrl:\n  host: gw.example.com\n")
         val v = w.failure().violations.single()
         assertEquals(Codes.INVALID_TYPE, v.code)
-        assertEquals("PUBLICURL", v.input)
+        assertEquals("PUBLIC_URL", v.input)
         assertContains(v.message, "is a map, not a url")
     }
 
@@ -272,14 +272,14 @@ class OverlayTest {
             	contract: app
             	overlays: platform: {
             		PORT:          9100
-            		LOGLEVEL:      "debug"
-            		TRACERATIO:    0.25
+            		LOG_LEVEL:      "debug"
+            		TRACE_RATIO:    0.25
             		COMPRESS:      false
             		TIMEOUT:       "1m30s"
             		IDLE:          "2m"
             		BROKERS:       ["a:9092", "b:9092"]
-            		ADMINPORTS:    [9100]
-            		DB_POOLSIZE:   30
+            		ADMIN_PORTS:    [9100]
+            		DB_POOL_SIZE:   30
             		POD_NAMESPACE: "staging"
             	}
             }

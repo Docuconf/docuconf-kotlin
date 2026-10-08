@@ -1,6 +1,8 @@
 package dev.docuconf.hoplite
 
 import com.sksamuel.hoplite.ArrayNode
+import com.sksamuel.hoplite.ConfigLoaderBuilder
+import com.sksamuel.hoplite.ExperimentalHoplite
 import com.sksamuel.hoplite.BooleanNode
 import com.sksamuel.hoplite.ConfigFailure
 import com.sksamuel.hoplite.ConfigResult
@@ -27,6 +29,7 @@ import dev.docuconf.kotlin.core.JsonValue
 import java.util.ServiceLoader
 import kotlin.reflect.KClass
 import kotlin.reflect.KType
+import kotlin.reflect.full.primaryConstructor
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.nanoseconds
 
@@ -34,15 +37,52 @@ import kotlin.time.Duration.Companion.nanoseconds
 internal const val FILE_MARKER = "docuconf-file:"
 
 /**
- * Hoplite's duration parser for env values: one number and one unit (`30s`, `5 minutes`), then
- * ISO-8601 for java.time.Duration. Returned as nanoseconds, or null when it does not parse.
+ * The duration forms docuconf accepts in an env value, for both duration types: ISO 8601 (`PT1M30S`,
+ * the contract's encoding, which the platform renders), Go syntax (`1m30s`, what people type
+ * locally), and Hoplite's one number and one unit (`30s`, `5 minutes`). Returned as nanoseconds, or
+ * null when none parses.
  */
 internal fun hopliteDuration(raw: String): Long? =
-    parseDuration(raw).fold({ null }, { it.toNanos() }) ?: Durations.parseIso(raw)
+    Durations.parseIso(raw) ?: Durations.parseGo(raw) ?: parseDuration(raw).fold({ null }, { it.toNanos() })
+
+/** What a duration error says is accepted. */
+internal const val DURATION_HINT: String = "an ISO 8601 duration like PT30S, or Go syntax like 30s or 1m30s"
+
+/**
+ * java.time.Duration: Hoplite's own decoder takes ISO 8601 and `30s`-style values, but not Go's
+ * `1m30s`. docuconf's decoder takes all three ([hopliteDuration]).
+ */
+internal class JavaDurationDecoder : Decoder<java.time.Duration> {
+    override fun supports(type: KType): Boolean = type.classifier == java.time.Duration::class
+    override fun priority(): Int = 10
+
+    override fun decode(node: Node, type: KType, context: DecoderContext): ConfigResult<java.time.Duration> = when (node) {
+        is StringNode -> hopliteDuration(node.value)?.let { java.time.Duration.ofNanos(it) }?.valid() ?: ConfigFailure.DecodeError(node, type).invalid()
+        is LongNode -> java.time.Duration.ofMillis(node.value).valid()
+        else -> ConfigFailure.DecodeError(node, type).invalid()
+    }
+}
+
+/** Binds enums whose constants carry [WireName] by their wire value. Other enums use Hoplite's decoder. */
+internal class WireEnumDecoder : Decoder<Enum<*>> {
+    override fun supports(type: KType): Boolean {
+        val k = type.classifier as? KClass<*> ?: return false
+        return k.java.isEnum && k.java.fields.any { it.isEnumConstant && it.isAnnotationPresent(WireName::class.java) }
+    }
+
+    override fun priority(): Int = 10
+
+    override fun decode(node: Node, type: KType, context: DecoderContext): ConfigResult<Enum<*>> {
+        val k = type.classifier as KClass<*>
+        val raw = (node as? StringNode)?.value ?: return ConfigFailure.DecodeError(node, type).invalid()
+        val match = k.java.enumConstants.map { it as Enum<*> }.firstOrNull { DeclarationReader.wireName(it) == raw }
+        return match?.valid() ?: ConfigFailure.DecodeError(node, type).invalid()
+    }
+}
 
 /**
  * kotlin.time.Duration: Hoplite's own decoder takes only `30s`-style values, which cannot carry
- * `1m30s`. docuconf's decoder also takes ISO-8601 (`PT1M30S`), the encoding in the contract.
+ * `1m30s`. docuconf's decoder takes the same forms as for java.time.Duration ([hopliteDuration]).
  */
 internal class KotlinDurationDecoder : Decoder<kotlin.time.Duration> {
     override fun supports(type: KType): Boolean = type.classifier == kotlin.time.Duration::class
@@ -54,6 +94,34 @@ internal class KotlinDurationDecoder : Decoder<kotlin.time.Duration> {
         else -> ConfigFailure.DecodeError(node, type).invalid()
     }
 }
+
+/** The decoders docuconf adds for values: durations in every accepted form, wire-named enums, [Json]. */
+internal fun valueDecoders(): List<Decoder<*>> = listOf(KotlinDurationDecoder(), JavaDurationDecoder(), WireEnumDecoder(), JsonVarDecoder())
+
+/**
+ * Whether a sealed type appears anywhere in [root]'s class tree, including `@NotInContract`
+ * parameters. Without one, docuconf turns on Hoplite's explicit sealed types, which changes nothing
+ * but silences Hoplite 3.0's deprecation notice about sealed-type inference.
+ */
+internal fun hasSealedTypes(root: KClass<*>): Boolean {
+    val seen = HashSet<KClass<*>>()
+    fun visit(t: KType?): Boolean {
+        val k = t?.classifier as? KClass<*> ?: return false
+        if (t.arguments.any { visit(it.type) }) return true
+        if (!seen.add(k)) return false
+        if (k.isSealed) return true
+        val pkg = k.java.`package`?.name ?: ""
+        if (pkg.startsWith("java.") || pkg.startsWith("kotlin.") || k.java.isEnum || k.java.isPrimitive) return false
+        return k.primaryConstructor?.parameters?.any { visit(it.type) } ?: false
+    }
+    if (root.isSealed) return true
+    seen += root
+    return root.primaryConstructor?.parameters?.any { visit(it.type) } ?: false
+}
+
+/** Hoplite's explicit sealed types (an experimental API in 3.0). */
+@OptIn(ExperimentalHoplite::class)
+internal fun ConfigLoaderBuilder.explicitSealedTypes(): ConfigLoaderBuilder = withExplicitSealedTypes()
 
 /** Decodes a [Json] variable: parses the string, then lets Hoplite bind the result to `T`. */
 internal class JsonVarDecoder : Decoder<Json<*>> {

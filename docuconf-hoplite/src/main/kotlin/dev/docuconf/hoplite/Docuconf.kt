@@ -2,7 +2,6 @@ package dev.docuconf.hoplite
 
 import com.sksamuel.hoplite.ArrayNode
 import com.sksamuel.hoplite.BooleanNode
-import com.sksamuel.hoplite.ConfigException
 import com.sksamuel.hoplite.ConfigLoaderBuilder
 import com.sksamuel.hoplite.DoubleNode
 import com.sksamuel.hoplite.LongNode
@@ -14,7 +13,6 @@ import com.sksamuel.hoplite.NullNode
 import com.sksamuel.hoplite.addPathSource
 import com.sksamuel.hoplite.addResourceOrFileSource
 import com.sksamuel.hoplite.fp.getOrElse
-import com.sksamuel.hoplite.sources.EnvironmentVariablesPropertySource
 import com.sksamuel.hoplite.sources.MapPropertySource
 import com.sksamuel.hoplite.transformer.PathNormalizer
 import dev.docuconf.kotlin.core.Codes
@@ -28,28 +26,29 @@ import dev.docuconf.kotlin.core.FileType
 import dev.docuconf.kotlin.core.Generator
 import dev.docuconf.kotlin.core.JsonSyntaxException
 import dev.docuconf.kotlin.core.JsonValue
+import dev.docuconf.kotlin.core.ListEncoding
 import dev.docuconf.kotlin.core.ListItems
 import dev.docuconf.kotlin.core.MarkdownWriter
 import dev.docuconf.kotlin.core.ValueChecks
 import dev.docuconf.kotlin.core.VarSpec
 import dev.docuconf.kotlin.core.VarType
 import dev.docuconf.kotlin.core.Violation
+import java.io.PrintStream
 import java.nio.file.Files
 import java.nio.file.Path
 import java.time.Clock
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.reflect.KClass
+import kotlin.reflect.full.findAnnotation
+import kotlin.system.exitProcess
 
-/** Options for [Docuconf.load], [Docuconf.check] and [Docuconf.contract]. */
+/** Options for [Docuconf.load], [Docuconf.check], `withDocuconf()` and [Docuconf.contract]. */
 public class DocuconfOptions {
-    /** The process environment. Replace it in tests. */
+    /** The process environment. Replace it in tests: docuconf never reads or changes the real one then. */
     public var env: Map<String, String> = System.getenv()
 
     /** A `.env` file to read for local development (opt-in). Real environment variables override it. */
     public var dotenv: Path? = null
-
-    /** The prefix of the Hoplite environment source: `APP_` makes `port` read `APP_PORT`. */
-    public var prefix: String = ""
 
     /** Prepended to every absolute file input path. Defaults to `DOCUCONF_FILE_ROOT`. */
     public var fileRoot: String? = null
@@ -60,29 +59,29 @@ public class DocuconfOptions {
      */
     public var terminationLog: String? = null
 
-    /**
-     * Config files baked into the image, as Hoplite resource-or-file paths (`/application.yaml`).
-     * Hoplite reads them below environment variables, and their values are exported as defaults
-     * (SPEC §4.4).
-     */
-    public var baseSources: List<String> = emptyList()
-
     /** The clock for certificate validity checks. */
     public var clock: Clock = Clock.systemUTC()
 
-    /** Receives warnings: deprecated inputs that are still set, feature-flag-like names. */
-    public var warn: (String) -> Unit = { System.err.println("docuconf: warning: $it") }
+    /** Receives warnings: deprecated inputs that are still set, feature-flag-like names, likely typos. */
+    public var warn: (String) -> Unit = { System.err.println("docuconf: $it") }
 
-    internal var hopliteConfig: ConfigLoaderBuilder.() -> Unit = {}
+    // Tests only: the prefix and base sources come from @DocuconfService, so load and export agree.
+    internal var prefix: String? = null
+    internal var baseSources: List<String>? = null
+
+    internal val hopliteConfigs = ArrayList<ConfigLoaderBuilder.() -> Unit>()
 
     /**
-     * Customises the Hoplite [ConfigLoaderBuilder] (decoders, preprocessors, extra sources). docuconf
-     * starts from `defaultWithoutPropertySources()` and adds its own environment source, which treats
-     * an empty value as unset. Sources added here rank below environment variables, overlays and base sources.
+     * Customises the Hoplite [ConfigLoaderBuilder] (decoders, preprocessors, extra sources). Each call
+     * adds a block; they run in order. docuconf starts from `defaultWithoutPropertySources()` and adds
+     * its own environment source. Sources added here rank below environment variables, overlays and
+     * base sources. To start from a builder of your own, use `withDocuconf()` instead.
      */
     public fun hoplite(configure: ConfigLoaderBuilder.() -> Unit) {
-        hopliteConfig = configure
+        hopliteConfigs += configure
     }
+
+    internal val hopliteConfig: ConfigLoaderBuilder.() -> Unit get() = { hopliteConfigs.forEach { it(this) } }
 
     internal fun effectiveEnv(): Map<String, String> {
         val file = dotenv ?: return env
@@ -98,6 +97,20 @@ public sealed class LoadResult<out T : Any> {
     public data class Success<T : Any>(val value: T, override val warnings: List<String>) : LoadResult<T>()
 
     public data class Failure(val violations: List<Violation>, override val warnings: List<String>) : LoadResult<Nothing>()
+}
+
+/** The prefix and base sources of a config class: [DocuconfService], unless a test overrides them. */
+internal class ServiceSettings(val name: String?, val prefix: String, val baseSources: List<String>) {
+    companion object {
+        fun of(type: KClass<*>, options: DocuconfOptions): ServiceSettings {
+            val a = type.findAnnotation<DocuconfService>()
+            return ServiceSettings(
+                name = a?.name?.ifEmpty { null },
+                prefix = options.prefix ?: a?.prefix ?: "",
+                baseSources = options.baseSources ?: a?.baseSources?.toList() ?: emptyList(),
+            )
+        }
+    }
 }
 
 /**
@@ -118,8 +131,26 @@ public object Docuconf {
         load(T::class, DocuconfOptions().apply(configure))
 
     /** Loads [type], or throws [ConfigViolationException] after writing the violations to the termination log. */
-    public fun <T : Any> load(type: KClass<T>, options: DocuconfOptions = DocuconfOptions()): T =
-        when (val r = check(type, options)) {
+    public fun <T : Any> load(type: KClass<T>, options: DocuconfOptions = DocuconfOptions()): T = load(type, options, null)
+
+    /**
+     * Loads [T], or prints every problem to stderr, writes them to the termination log and exits with
+     * status 1. No stack trace. Use it in `main`:
+     *
+     * ```
+     * docuconf: 2 configuration problems:
+     *   PORT: out_of_range: "0" is below min 1
+     *   DATABASE_URL: missing_required: required, but not set
+     * ```
+     */
+    public inline fun <reified T : Any> loadOrExit(noinline configure: DocuconfOptions.() -> Unit = {}): T =
+        loadOrExit(T::class, DocuconfOptions().apply(configure))
+
+    /** Loads [type], or prints every problem, writes the termination log and exits with status 1. */
+    public fun <T : Any> loadOrExit(type: KClass<T>, options: DocuconfOptions = DocuconfOptions()): T = loadOrExit(type, options, null)
+
+    internal fun <T : Any> load(type: KClass<T>, options: DocuconfOptions, builder: ConfigLoaderBuilder?): T =
+        when (val r = check(type, options, builder)) {
             is LoadResult.Success -> r.value
             is LoadResult.Failure -> {
                 val e = ConfigViolationException(r.violations)
@@ -128,11 +159,33 @@ public object Docuconf {
             }
         }
 
+    internal fun <T : Any> loadOrExit(
+        type: KClass<T>,
+        options: DocuconfOptions,
+        builder: ConfigLoaderBuilder?,
+        err: PrintStream = System.err,
+        exit: (Int) -> Nothing = { exitProcess(it) },
+    ): T = try {
+        load(type, options, builder)
+    } catch (e: ConfigViolationException) {
+        err.println(e.message)
+        exit(1)
+    } catch (e: DeclarationException) {
+        // A programming error, but at boot it is still reported cleanly.
+        val message = "docuconf: " + e.message
+        writeTerminationLog(options, message)
+        err.println(message)
+        exit(1)
+    }
+
     /** Checks and loads [type] without throwing for configuration problems. Declaration errors still throw. */
-    public fun <T : Any> check(type: KClass<T>, options: DocuconfOptions = DocuconfOptions()): LoadResult<T> {
+    public fun <T : Any> check(type: KClass<T>, options: DocuconfOptions = DocuconfOptions()): LoadResult<T> = check(type, options, null)
+
+    internal fun <T : Any> check(type: KClass<T>, options: DocuconfOptions, userBuilder: ConfigLoaderBuilder?): LoadResult<T> {
         val env = options.effectiveEnv()
-        val decl = declaration(type, options.prefix)
-        val vars = effectiveVars(decl, options)
+        val settings = ServiceSettings.of(type, options)
+        val decl = declaration(type, settings.prefix)
+        val vars = effectiveVars(decl, settings, options.hopliteConfig)
         val contract = Contract("check", Generator("kotlin", SDK, VERSION), vars.map { it.spec }, decl.files.map { it.spec }, overlays = decl.overlays)
         val warnings = ArrayList(DeclarationChecks.require(contract) + decl.warnings)
         val classLoader = type.java.classLoader ?: Docuconf::class.java.classLoader
@@ -142,31 +195,43 @@ public object Docuconf {
         // Overlays (SPEC §4.7): their values are checked like env values, and Hoplite layers them
         // between the base files and the environment.
         val overlayPaths = decl.overlays.associateWith { Overlays.resolve(it, fileRoot) }
-        Overlays.checkDirs(decl.overlays, { overlayPaths.getValue(it) }, Overlays.shippedDirs(type, options.baseSources, classLoader))
+        Overlays.checkDirs(decl.overlays, { overlayPaths.getValue(it) }, Overlays.shippedDirs(type, settings.baseSources, classLoader))
         val overlays = decl.overlays.map { Overlays.load(it, overlayPaths.getValue(it), classLoader, violations) }
 
-        val hostOptions = ValueChecks.Options(trimListItems = true, hostDuration = ::hopliteDuration, lenientBools = setOf("t", "f", "1", "0", "yes", "no"))
-        val filteredEnv = HashMap(env)
+        val typos = Typos.find(env, contract, settings.prefix)
+        typos.forEach { (set, declared) -> warnings += "$set is set but not declared; did you mean $declared?" }
+
+        val hostOptions = ValueChecks.Options(
+            trimListItems = true,
+            hostDuration = ::hopliteDuration,
+            lenientBools = setOf("t", "f", "1", "0", "yes", "no"),
+            durationHint = DURATION_HINT,
+        )
+        // The values docuconf hands Hoplite, keyed by property path (db.poolSize), so Hoplite's own
+        // environment naming never applies.
+        val values = LinkedHashMap<String, String>()
         for (v in vars) {
             val raw = env[v.spec.name]
             // Hoplite reads sources in order, so the first overlay declared that holds the key wins.
             val fromOverlay = overlays.firstNotNullOfOrNull { o ->
                 o.root?.let { Overlays.at(it, v.path) }?.takeIf { it !is Undefined && it !is NullNode }?.let { o to it }
             }
+            // Hoplite would fail to parse "" for a non-string type; unset lets the overlay or default apply.
             val unset = ValueChecks.isUnset(v.spec, raw)
-            if (unset) {
-                // Hoplite would fail to parse "" for a non-string type; unset lets the overlay or default apply.
-                filteredEnv.remove(v.spec.name)
-            }
+            if (!unset) values[v.path.joinToString(".")] = raw!!
             if (!unset || fromOverlay != null) {
                 v.spec.deprecated?.let { d -> warnings += "${v.spec.name} is deprecated: ${d.message}" + (d.replacedBy?.let { r -> " Use $r." } ?: "") }
             }
-            when {
-                fromOverlay != null && (unset || v.spec.secret) -> violations += Overlays.check(v, fromOverlay.second, fromOverlay.first.spec, hostOptions)
+            val found = when {
+                fromOverlay != null && (unset || v.spec.secret) -> Overlays.check(v, fromOverlay.second, fromOverlay.first.spec, hostOptions)
                 else -> {
                     if (fromOverlay != null) warnings += "${v.spec.name} is set in the environment and in overlay ${fromOverlay.first.spec.name}; the environment wins"
-                    violations += ValueChecks.check(v.spec, raw, hostOptions)
+                    ValueChecks.check(v.spec, raw, hostOptions) + emptyItems(v.spec, raw)
                 }
+            }
+            violations += found.map { f ->
+                val typo = typos.entries.firstOrNull { it.value == f.input }?.key
+                if (f.code == Codes.MISSING_REQUIRED && typo != null) f.copy(message = "${f.message} ($typo is set; a typo?)") else f
             }
         }
 
@@ -185,81 +250,127 @@ public object Docuconf {
         if (violations.isNotEmpty()) return LoadResult.Failure(violations, warnings).also { warnings.forEach(options.warn) }
 
         val markers = decl.files.filter { it.spec.name in files.loaded }.associate { it.path.joinToString(".") to FILE_MARKER + it.spec.name }
-        val prefix = options.prefix.ifEmpty { null }
-        val value = try {
-            ConfigLoaderBuilder.defaultWithoutPropertySources()
-                .addDecoder(KotlinDurationDecoder())
-                .addDecoder(JsonVarDecoder())
-                .addDecoder(FileInputDecoder(files.loaded))
-                .addPropertySource(MapPropertySource(markers))
-                .addPropertySource(EnvironmentVariablesPropertySource({ filteredEnv }, prefix))
-                // Hoplite: earlier sources win. So: environment > overlays > base files (SPEC §4.7).
-                .apply { overlays.forEach { addPathSource(it.path, optional = true, allowEmpty = true) } }
-                .apply { options.baseSources.forEach { addResourceOrFileSource(it) } }
-                .apply(options.hopliteConfig)
-                .build()
-                .loadConfigOrThrow(type, emptyList())
-        } catch (e: ConfigException) {
-            // Pre-checks should have caught this. Report Hoplite's reason with secret values removed.
-            var message = e.message ?: "Hoplite could not bind ${type.simpleName}"
-            for (v in vars) if (v.spec.secret) env[v.spec.name]?.takeIf { it.isNotEmpty() }?.let { message = message.replace(it, "****") }
-            val failure = LoadResult.Failure(listOf(Violation(Codes.INVALID_TYPE, type.simpleName ?: "config", message.trim())), warnings)
+        val loader = HopliteLoader.build(
+            type = type,
+            userBuilder = userBuilder,
+            hopliteConfig = options.hopliteConfig,
+            // Hoplite: earlier sources win. So: environment > overlays > base files (SPEC §4.7).
+            front = listOf(MapPropertySource(markers), MapPropertySource(values)),
+            files = { overlays.forEach { addPathSource(it.path, optional = true, allowEmpty = true) }; settings.baseSources.forEach { addResourceOrFileSource(it) } },
+            decoders = valueDecoders() + FileInputDecoder(files.loaded),
+        )
+        if (userBuilder != null) HopliteLoader.checkUserFiles(loader.user, vars, settings)
+        val secrets = vars.filter { it.spec.secret }.mapNotNull { env[it.spec.name]?.takeIf { s -> s.isNotEmpty() } }
+        val bound = try {
+            HopliteLoader.bind(loader.loader, type, classLoader)
+        } catch (e: Exception) {
+            // Hoplite reports most problems as failures; anything thrown (a user's init block) is reported too.
+            val failure = LoadResult.Failure(listOf(Violation(Codes.INVALID_TYPE, type.simpleName ?: "config", redact(e.message ?: e.toString(), secrets))), warnings)
             warnings.forEach(options.warn)
             return failure
         }
         warnings.forEach(options.warn)
-        return LoadResult.Success(value, warnings)
+        return bound.fold(
+            { failure -> LoadResult.Failure(HopliteFailures.violations(failure, type, vars, secrets), warnings) },
+            { value -> LoadResult.Success(value, warnings) },
+        )
     }
 
-    /** The contract for [type]. Throws [DeclarationException] when the declaration is invalid. */
-    public fun contract(type: KClass<*>, service: String, appVersion: String? = null, configure: DocuconfOptions.() -> Unit = {}): Contract {
+    /** `ALLOWED_ORIGINS=","` gives two empty items; an empty csv item is never what the platform meant. */
+    private fun emptyItems(spec: VarSpec, raw: String?): List<Violation> {
+        if (spec.type != VarType.LIST || spec.listEncoding != ListEncoding.CSV || raw.isNullOrEmpty()) return emptyList()
+        val empty = raw.split(spec.separator).withIndex().filter { it.value.trim().isEmpty() }.map { it.index }
+        if (empty.isEmpty()) return emptyList()
+        return listOf(Violation(Codes.INVALID_TYPE, spec.name, "item${if (empty.size == 1) "" else "s"} ${empty.joinToString(", ")} ${if (empty.size == 1) "is" else "are"} empty; separate items with a single ${spec.separator}"))
+    }
+
+    /**
+     * The contract for [type]. [service] defaults to [DocuconfService.name]. Throws
+     * [DeclarationException] when the declaration is invalid.
+     */
+    public fun contract(type: KClass<*>, service: String? = null, appVersion: String? = null, configure: DocuconfOptions.() -> Unit = {}): Contract {
         val options = DocuconfOptions().apply(configure)
-        val decl = declaration(type, options.prefix)
+        val settings = ServiceSettings.of(type, options)
+        val name = service ?: settings.name
+            ?: throw DeclarationException(listOf("${type.simpleName}: no service name; annotate the class @DocuconfService(name = \"...\") or pass one"))
+        if (service != null && settings.name != null && service != settings.name) {
+            throw DeclarationException(listOf("${type.simpleName}: service \"$service\" differs from @DocuconfService(name = \"${settings.name}\"); set it in one place"))
+        }
+        val decl = declaration(type, settings.prefix)
         val contract = Contract(
-            service = service,
+            service = name,
             generator = Generator("kotlin", SDK, VERSION),
-            vars = effectiveVars(decl, options).map { it.spec },
+            vars = effectiveVars(decl, settings, options.hopliteConfig).map { it.spec },
             files = decl.files.map { it.spec },
             appVersion = appVersion,
             overlays = decl.overlays,
         )
         val classLoader = type.java.classLoader ?: Docuconf::class.java.classLoader
-        Overlays.checkDirs(decl.overlays, { Path.of(it.path) }, Overlays.shippedDirs(type, options.baseSources, classLoader))
+        Overlays.checkDirs(decl.overlays, { Path.of(it.path) }, Overlays.shippedDirs(type, settings.baseSources, classLoader))
         (DeclarationChecks.require(contract) + decl.warnings).forEach(options.warn)
         return contract
     }
 
     /** `contract.cue` for [type] (SPEC §4). Deterministic. */
-    public fun exportCue(type: KClass<*>, service: String, appVersion: String? = null, configure: DocuconfOptions.() -> Unit = {}): String =
+    public fun exportCue(type: KClass<*>, service: String? = null, appVersion: String? = null, configure: DocuconfOptions.() -> Unit = {}): String =
         CueWriter.write(contract(type, service, appVersion, configure))
 
+    /**
+     * [cue], a contract as [exportCue] writes it, with the value of `metadata.generator.version` replaced by a
+     * placeholder and nothing else changed. That value is [VERSION], which changes with every release, so the
+     * checks that a committed contract is current compare through this: `Export --check`, the Gradle plugin's
+     * `docuconfCheck` and the README's unit test. Any other difference still fails them.
+     */
+    public fun withoutGeneratorVersion(cue: String): String {
+        var inMetadata = false
+        return cue.split('\n').joinToString("\n") { line ->
+            when (line.removeSuffix("\r")) {
+                "\tmetadata: {" -> line.also { inMetadata = true }
+                "\t}" -> line.also { inMetadata = false }
+                else -> if (inMetadata) GENERATOR_VERSION.replace(line) { it.groupValues[1] + "\"<generator-version>\"" + it.groupValues[2] } else line
+            }
+        }
+    }
+
+    /** The `generator` line of `metadata`, as CueWriter writes it: group 1 is up to the version, group 2 after it. */
+    private val GENERATOR_VERSION =
+        Regex("""^(\t\tgenerator: \{language: "(?:[^"\\]|\\.)*", sdk: "(?:[^"\\]|\\.)*", version: )"(?:[^"\\]|\\.)*"(\}\r?)$""")
+
     /** Markdown documentation of every input of [type]. */
-    public fun exportMarkdown(type: KClass<*>, service: String, appVersion: String? = null, configure: DocuconfOptions.() -> Unit = {}): String =
+    public fun exportMarkdown(type: KClass<*>, service: String? = null, appVersion: String? = null, configure: DocuconfOptions.() -> Unit = {}): String =
         MarkdownWriter.write(contract(type, service, appVersion, configure))
+
+    internal fun redact(message: String, secrets: List<String>): String = secrets.fold(message) { m, s -> m.replace(s, "****") }
 
     internal fun declaration(type: KClass<*>, prefix: String): Declaration =
         declarations.getOrPut(type to prefix) { DeclarationReader.read(type, prefix) }
 
     /** Variables with defaults from base config files applied (SPEC §4.4). */
-    private fun effectiveVars(decl: Declaration, options: DocuconfOptions): List<VarBinding> {
-        if (options.baseSources.isEmpty()) return decl.vars
+    internal fun effectiveVars(decl: Declaration, settings: ServiceSettings, hopliteConfig: ConfigLoaderBuilder.() -> Unit): List<VarBinding> {
+        if (settings.baseSources.isEmpty()) return decl.vars
         val root = ConfigLoaderBuilder.defaultWithoutPropertySources()
-            .apply(options.hopliteConfig)
+            .explicitSealedTypes()
+            .apply(hopliteConfig)
             .build()
-            .loadNode(options.baseSources)
-            .getOrElse { throw DeclarationException(listOf("base sources ${options.baseSources}: ${it.description()}")) }
+            .loadNode(settings.baseSources)
+            .getOrElse { throw DeclarationException(listOf("base sources ${settings.baseSources}: ${it.description()}")) }
+        return withDefaults(decl.vars, root, settings.baseSources.joinToString())
+    }
+
+    /** [vars] with the values in [root] (a config file tree) as defaults; a secret there is an error. */
+    internal fun withDefaults(vars: List<VarBinding>, root: Node, where: String): List<VarBinding> {
         val errors = ArrayList<String>()
-        val result = decl.vars.map { v ->
+        val result = vars.map { v ->
             val node = v.path.fold(root) { n, seg -> lookup(n, seg) }
             if (node is Undefined) return@map v
             if (v.spec.secret) {
-                errors += "${v.spec.name}: a secret cannot have a value in a config file baked into the image (${options.baseSources.joinToString()})"
+                errors += "${v.spec.name}: a secret cannot have a value in a config file baked into the image ($where)"
                 return@map v
             }
             val value = try {
                 baseValue(v.spec, node)
             } catch (e: IllegalArgumentException) {
-                errors += "${v.spec.name}: the value in ${options.baseSources.joinToString()} ${e.message}"
+                errors += "${v.spec.name}: the value in $where ${e.message}"
                 return@map v
             }
             v.copy(spec = v.spec.copy(default = value, required = false))
@@ -268,13 +379,13 @@ public object Docuconf {
         return result
     }
 
-    private fun lookup(n: Node, segment: String): Node {
+    internal fun lookup(n: Node, segment: String): Node {
         if (n !is MapNode) return Undefined
         val direct = n.atKey(segment)
         return if (direct !is Undefined) direct else n.atKey(PathNormalizer.transformPathElement(segment))
     }
 
-    private fun baseValue(spec: VarSpec, node: Node): JsonValue {
+    internal fun baseValue(spec: VarSpec, node: Node): JsonValue {
         fun bad(): Nothing = throw IllegalArgumentException("is not a valid ${spec.type.wire}")
         fun scalar(): String = when (node) {
             is StringNode -> node.value
@@ -309,7 +420,7 @@ public object Docuconf {
         }
     }
 
-    private fun writeTerminationLog(options: DocuconfOptions, message: String) {
+    internal fun writeTerminationLog(options: DocuconfOptions, message: String) {
         val explicit = options.terminationLog ?: options.env["DOCUCONF_TERMINATION_LOG"]?.takeIf { it.isNotEmpty() }
         val path = explicit?.let { Path.of(it) } ?: Path.of("/dev/termination-log").takeIf { Files.exists(it) } ?: return
         try {

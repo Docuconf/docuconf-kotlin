@@ -72,7 +72,7 @@ internal object SchemaGenerator {
                 }
                 k.java.isEnum -> {
                     fields["type"] = JsonValue.Str("string")
-                    fields["enum"] = JsonValue.Arr(k.java.enumConstants.map { JsonValue.Str((it as Enum<*>).name) })
+                    fields["enum"] = JsonValue.Arr(k.java.enumConstants.map { JsonValue.Str(DeclarationReader.wireName(it as Enum<*>)) })
                 }
                 k == List::class || k == Set::class || k == Collection::class -> {
                     val item = t.arguments.firstOrNull()?.type ?: fail("collection $t needs a concrete item type")
@@ -122,7 +122,7 @@ internal fun toJsonValue(value: Any?): JsonValue = when (value) {
     is Double -> JsonValue.Float(value)
     is BigInteger -> JsonValue.Int(value.toLong())
     is BigDecimal -> JsonValue.Float(value.toDouble())
-    is Enum<*> -> JsonValue.Str(value.name)
+    is Enum<*> -> JsonValue.Str(DeclarationReader.wireName(value))
     is URI, is URL -> JsonValue.Str(value.toString())
     is java.time.Duration -> JsonValue.Str(Durations.formatGo(value.toNanos()))
     is kotlin.time.Duration -> JsonValue.Str(Durations.formatGo(value.inWholeNanoseconds))
