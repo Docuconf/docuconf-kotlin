@@ -114,6 +114,8 @@ public data class VarSpec(
     val itemMaxLength: Int? = null,
     // json
     val schema: JsonValue? = null,
+    /** Longer docs in CommonMark (SPEC §4.2): the KDoc after its first sentence, or `@Doc(details = ...)`. Never read at runtime. */
+    val details: String? = null,
 )
 
 /** One file input in the contract (SPEC §4.6). */
@@ -146,6 +148,8 @@ public data class FileSpec(
     val pattern: String? = null,
     val minLength: Int? = null,
     val maxLength: Int? = null,
+    /** Longer docs in CommonMark (SPEC §4.2): the KDoc after its first sentence, or `@Doc(details = ...)`. Never read at runtime. */
+    val details: String? = null,
 ) {
     /** TLS key pairs and keystores are always secret (SPEC §4.6). */
     val isSecret: Boolean get() = secret || type == FileType.TLS || type == FileType.KEYSTORE

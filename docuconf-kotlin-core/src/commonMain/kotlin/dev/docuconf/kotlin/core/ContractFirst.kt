@@ -163,6 +163,7 @@ public object ContractFirst {
             name = name,
             type = type,
             description = str("description") ?: "",
+            details = str("details"),
             required = bool("required"),
             secret = bool("secret"),
             group = str("group"),
