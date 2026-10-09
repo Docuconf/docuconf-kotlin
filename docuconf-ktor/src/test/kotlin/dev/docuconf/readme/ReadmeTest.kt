@@ -17,6 +17,19 @@ class ReadmeTest {
     private val root = File(System.getProperty("docuconf.rootDir"))
 
     @Test
+    fun keySets() {
+        val newKey = "n".repeat(32)
+        val config = Docuconf.load<WebhookConfig> { env = mapOf("WEBHOOK_KEYS" to "${"o".repeat(32)},$newKey", "API_KEYS" to "a,b") }
+        val body = "{}".toByteArray()
+        val signature = javax.crypto.Mac.getInstance("HmacSHA256")
+            .apply { init(javax.crypto.spec.SecretKeySpec(newKey.toByteArray(), "HmacSHA256")) }
+            .doFinal(body)
+        assertTrue(verified(config, body, signature))
+        assertTrue(allowed(config, "b"))
+        assertTrue(!allowed(config, "c"))
+    }
+
+    @Test
     fun greets() = testApplication {
         application {
             provideDocuconfConfig(Docuconf.load<AppConfig> { env = mapOf("DATABASE_URL" to "postgres://u:pw@db/app") })

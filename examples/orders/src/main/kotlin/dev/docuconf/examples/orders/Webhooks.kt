@@ -1,6 +1,6 @@
 package dev.docuconf.examples.orders
 
-import com.sksamuel.hoplite.Secret
+import dev.docuconf.hoplite.KeySet
 import java.security.MessageDigest
 import javax.crypto.Mac
 import javax.crypto.spec.SecretKeySpec
@@ -9,23 +9,19 @@ import javax.crypto.spec.SecretKeySpec
 const val MAX_WEBHOOK_BODY: Int = 1 shl 20
 
 /**
- * Reports whether [signature], the hex-encoded HMAC-SHA256 of [body], was made with any of [keys].
- * Accepting every key in the set is what lets a key be rotated: during the overlap the old and the
- * new key both work.
+ * Reports whether [signature], the hex-encoded HMAC-SHA256 of [body], was made with any key in
+ * [keys]. Accepting every key in the set is what lets a key be rotated: during the overlap the old
+ * and the new key both work. [KeySet.verify] tries every key, even after one matches, so the time
+ * taken does not say which one did; `MessageDigest.isEqual` compares in constant time.
  */
-fun verifyWebhook(keys: List<Secret>?, body: ByteArray, signature: String?): Boolean {
+fun verifyWebhook(keys: KeySet?, body: ByteArray, signature: String?): Boolean {
     val got = signature?.let(::parseHex) ?: return false
-    var ok = false
-    for (key in keys.orEmpty()) {
-        // Check every key, so the time taken does not say which one matched.
-        ok = MessageDigest.isEqual(hmacSha256(key.value, body), got) or ok
-    }
-    return ok
+    return keys?.verify { key -> MessageDigest.isEqual(hmacSha256(key, body), got) } ?: false
 }
 
-internal fun hmacSha256(key: String, body: ByteArray): ByteArray =
+internal fun hmacSha256(key: ByteArray, body: ByteArray): ByteArray =
     Mac.getInstance("HmacSHA256").run {
-        init(SecretKeySpec(key.toByteArray(), "HmacSHA256"))
+        init(SecretKeySpec(key, "HmacSHA256"))
         doFinal(body)
     }
 

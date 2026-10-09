@@ -13,8 +13,11 @@ import com.sksamuel.hoplite.MapNode
 import com.sksamuel.hoplite.Node
 import com.sksamuel.hoplite.NullNode
 import com.sksamuel.hoplite.Pos
+import com.sksamuel.hoplite.PropertySource
+import com.sksamuel.hoplite.PropertySourceContext
 import com.sksamuel.hoplite.StringNode
 import com.sksamuel.hoplite.Undefined
+import com.sksamuel.hoplite.withPath
 import com.sksamuel.hoplite.decoder.Decoder
 import com.sksamuel.hoplite.decoder.DotPath
 import com.sksamuel.hoplite.fp.flatMap
@@ -26,6 +29,8 @@ import dev.docuconf.kotlin.core.ConfigFormat
 import dev.docuconf.kotlin.core.Durations
 import dev.docuconf.kotlin.core.JsonSyntaxException
 import dev.docuconf.kotlin.core.JsonValue
+import dev.docuconf.kotlin.core.VarSpec
+import dev.docuconf.kotlin.core.VarType
 import java.util.ServiceLoader
 import kotlin.reflect.KClass
 import kotlin.reflect.KType
@@ -37,16 +42,14 @@ import kotlin.time.Duration.Companion.nanoseconds
 internal const val FILE_MARKER = "docuconf-file:"
 
 /**
- * The duration forms docuconf accepts in an env value, for both duration types: ISO 8601 (`PT1M30S`,
- * the contract's encoding, which the platform renders), Go syntax (`1m30s`, what people type
- * locally), and Hoplite's one number and one unit (`30s`, `5 minutes`). Returned as nanoseconds, or
- * null when none parses.
+ * The duration forms the Hoplite decoders read from a config file of the app's own (a base source,
+ * an overlay or a config file input): ISO 8601 (`PT1M30S`), Go syntax (`1m30s`), and Hoplite's one
+ * number and one unit (`30s`, `5 minutes`). Environment values never get here as written: docuconf
+ * parses them exactly in their encoding (SPEC §5) and hands Hoplite the result in Go syntax.
+ * Returned as nanoseconds, or null when none parses.
  */
 internal fun hopliteDuration(raw: String): Long? =
     Durations.parseIso(raw) ?: Durations.parseGo(raw) ?: parseDuration(raw).fold({ null }, { it.toNanos() })
-
-/** What a duration error says is accepted. */
-internal const val DURATION_HINT: String = "an ISO 8601 duration like PT30S, or Go syntax like 30s or 1m30s"
 
 /**
  * java.time.Duration: Hoplite's own decoder takes ISO 8601 and `30s`-style values, but not Go's
@@ -95,8 +98,63 @@ internal class KotlinDurationDecoder : Decoder<kotlin.time.Duration> {
     }
 }
 
-/** The decoders docuconf adds for values: durations in every accepted form, wire-named enums, [Json]. */
-internal fun valueDecoders(): List<Decoder<*>> = listOf(KotlinDurationDecoder(), JavaDurationDecoder(), WireEnumDecoder(), JsonVarDecoder())
+/** The decoders docuconf adds for values: durations in every accepted form, wire-named enums, [Json], [KeySet]. */
+internal fun valueDecoders(): List<Decoder<*>> = listOf(KotlinDurationDecoder(), JavaDurationDecoder(), WireEnumDecoder(), JsonVarDecoder(), KeySetDecoder())
+
+/** Binds a [KeySet] from the keys docuconf checked and handed over as a list. */
+internal class KeySetDecoder : Decoder<KeySet> {
+    override fun supports(type: KType): Boolean = type.classifier == KeySet::class
+    override fun priority(): Int = 10
+
+    override fun decode(node: Node, type: KType, context: DecoderContext): ConfigResult<KeySet> {
+        val keys = (node as? ArrayNode)?.elements?.map { (it as? StringNode)?.value ?: return ConfigFailure.DecodeError(node, type).invalid() }
+        return keys?.let { KeySet(it).valid() } ?: ConfigFailure.DecodeError(node, type).invalid()
+    }
+}
+
+/**
+ * A property source holding docuconf's own values as a node tree, keyed by property path: the
+ * values docuconf parsed from the environment and overlays (so Hoplite binds exactly what was
+ * checked, never re-parsing a string more leniently), and the markers of loaded file inputs.
+ */
+internal class NodeSource(private val values: Map<List<String>, Node>) : PropertySource {
+    override fun source(): String = "docuconf"
+
+    override fun node(context: PropertySourceContext): ConfigResult<Node> {
+        if (values.isEmpty()) return Undefined.valid()
+        val root = LinkedHashMap<String, Any>()
+        for ((path, node) in values) {
+            var map = root
+            for (segment in path.dropLast(1)) {
+                @Suppress("UNCHECKED_CAST")
+                map = map.getOrPut(segment) { LinkedHashMap<String, Any>() } as LinkedHashMap<String, Any>
+            }
+            map[path.last()] = node
+        }
+        return build(root, DotPath.root).valid()
+    }
+
+    private fun build(map: Map<String, Any>, path: DotPath): MapNode = MapNode(
+        map.mapValues { (k, v) ->
+            @Suppress("UNCHECKED_CAST")
+            if (v is Node) v.withPath(path.with(k)) else build(v as Map<String, Any>, path.with(k))
+        },
+        Pos.NoPos,
+        path,
+    )
+}
+
+/**
+ * The node Hoplite binds for a value docuconf parsed ([ValueChecks.parse]'s typed value): numbers,
+ * booleans and lists as themselves, durations in canonical Go form for docuconf's decoders, and a
+ * json value as its JSON text for [JsonVarDecoder].
+ */
+internal fun valueNode(spec: VarSpec, value: Any): Node = when {
+    spec.type == VarType.DURATION -> StringNode(Durations.formatGo(value as Long), Pos.NoPos, DotPath.root)
+    spec.type == VarType.JSON -> StringNode((value as JsonValue).toString(), Pos.NoPos, DotPath.root)
+    value is KeySet -> ArrayNode(value.keys.map { StringNode(it, Pos.NoPos, DotPath.root) }, Pos.NoPos, DotPath.root)
+    else -> toNode(JsonValue.of(value))
+}
 
 /**
  * Whether a sealed type appears anywhere in [root]'s class tree, including `@NotInContract`
@@ -145,7 +203,7 @@ internal class JsonVarDecoder : Decoder<Json<*>> {
 
 /** Hands file inputs, already loaded and checked by docuconf, to Hoplite when it binds the class. */
 internal class FileInputDecoder(private val loaded: Map<String, Any>) : Decoder<Any> {
-    private val types: Set<KClass<*>> = setOf(ConfigFile::class, TlsKeyPair::class, CaBundle::class, Keystore::class, TextFile::class, BinaryFile::class)
+    private val types: Set<KClass<*>> = setOf(ConfigFile::class, TlsKeyPair::class, CaBundle::class, Keystore::class, TextFile::class, BinaryFile::class, Watched::class)
 
     override fun supports(type: KType): Boolean = type.classifier in types
     override fun priority(): Int = 10

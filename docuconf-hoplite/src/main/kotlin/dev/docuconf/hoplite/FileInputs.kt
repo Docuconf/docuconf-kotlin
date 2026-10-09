@@ -137,3 +137,10 @@ public class BinaryFile internal constructor(public val path: Path) {
  * Its JSON Schema is generated from [T]. Hoplite binds the parsed JSON to [T].
  */
 public data class Json<out T : Any>(val value: T)
+
+/**
+ * A set of secret keys that are all valid at once (contract type `keySet`, SPEC §4.3), for rotating a
+ * verification key without an outage. The same class as `dev.docuconf.kotlin.core.KeySet`: its
+ * [KeySet.keys] in order, a constant-time [KeySet.contains] and [KeySet.verify] for HMACs.
+ */
+public typealias KeySet = dev.docuconf.kotlin.core.KeySet

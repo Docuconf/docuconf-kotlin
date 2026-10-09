@@ -9,6 +9,7 @@ import com.sksamuel.hoplite.PropertySourceContext
 import com.sksamuel.hoplite.Undefined
 import com.sksamuel.hoplite.fp.valid
 import dev.docuconf.kotlin.core.Codes
+import dev.docuconf.kotlin.core.DeclarationException
 import dev.docuconf.kotlin.core.ConfigFormat
 import dev.docuconf.kotlin.core.Durations
 import dev.docuconf.kotlin.core.FileSpec
@@ -103,11 +104,13 @@ internal class FileLoader(
     private fun config(binding: FileBinding, path: Path) {
         val spec = binding.spec
         val format = spec.format!!
-        val parser = parserFor(format, classLoader) ?: error("no Hoplite parser for ${format.wire}; add ${parserModule(format)}")
+        val parser = parserFor(format, classLoader)
+            ?: throw DeclarationException(listOf("file ${spec.name}: no Hoplite parser for ${format.wire} on the classpath; add ${parserModule(format)}"))
+        // Read first, so a failure to read (file_unreadable) is never confused with a parser's
+        // exception (Jackson's parse errors are IOExceptions).
+        val bytes = Files.readAllBytes(path)
         val node: Node = try {
-            Files.newInputStream(path).use { parser.load(it, path.toString()) }
-        } catch (e: java.io.IOException) {
-            throw e
+            ByteArrayInputStream(bytes).use { parser.load(it, path.toString()) }
         } catch (e: Exception) {
             add(Codes.FILE_MALFORMED, spec, "$path is not valid ${format.wire}" + if (spec.isSecret) "" else ": ${firstLine(e.message)}")
             return
@@ -123,7 +126,12 @@ internal class FileLoader(
                 return
             }
         }
-        val kclass = binding.valueType!!.classifier as KClass<*>
+        // Contract-first mode has no Kotlin type to bind: the value is the file's data.
+        val valueType = binding.valueType ?: run {
+            loaded[spec.name] = ConfigData.of(node, format, spec.schema)
+            return
+        }
+        val kclass = valueType.classifier as KClass<*>
         val source = object : PropertySource {
             override fun node(context: PropertySourceContext): ConfigResult<Node> = node.valid()
             override fun source(): String = path.toString()
@@ -163,10 +171,10 @@ internal class FileLoader(
         val certs = try {
             Pem.certificates(Files.readString(path))
         } catch (e: java.security.cert.CertificateException) {
-            add(Codes.FILE_MALFORMED, spec, "$path contains a malformed certificate")
+            add(Codes.CERTIFICATE_INVALID, spec, "$path contains a certificate that does not parse")
             return
         } catch (e: IllegalArgumentException) {
-            add(Codes.FILE_MALFORMED, spec, "$path contains a malformed certificate")
+            add(Codes.CERTIFICATE_INVALID, spec, "$path contains a certificate that does not parse")
             return
         }
         val min = spec.minCertificates ?: 1
@@ -178,10 +186,12 @@ internal class FileLoader(
     }
 
     private fun keystore(spec: FileSpec, path: Path) {
-        val password = spec.passwordVar?.let { env[it] }
+        // An unset password variable is an empty password (SPEC §11.2 item 7), never "no password",
+        // with which the JDK would skip the integrity check.
+        val password = spec.passwordVar?.let { env[it] } ?: ""
         val ks = try {
             KeyStore.getInstance(if (spec.keystoreFormat?.wire == "jks") "JKS" else "PKCS12").apply {
-                Files.newInputStream(path).use { load(it, password?.toCharArray()) }
+                Files.newInputStream(path).use { load(it, password.toCharArray()) }
             }
         } catch (e: java.io.IOException) {
             if (e is AccessDeniedException) throw e
@@ -211,22 +221,34 @@ internal class FileLoader(
         }
         if (missing) return
 
-        val chain = try {
-            Pem.certificates(Files.readString(certPath))
-        } catch (e: Exception) {
-            if (e is java.io.IOException) throw e
-            emptyList()
+        // No PEM certificate (or key) at all is file_malformed; one that does not parse is
+        // certificate_invalid (SPEC §11.2 item 5).
+        val certText = Files.readString(certPath)
+        if (Pem.blockTypes(certText).none { it == "CERTIFICATE" }) {
+            add(Codes.FILE_MALFORMED, spec, "$certPath holds no PEM certificate")
+            return
         }
-        if (chain.isEmpty()) {
-            add(Codes.CERTIFICATE_INVALID, spec, "$certPath is not a PEM certificate")
+        val chain = try {
+            Pem.certificates(certText)
+        } catch (e: Exception) {
+            add(Codes.CERTIFICATE_INVALID, spec, "$certPath holds a certificate that does not parse")
             return
         }
         val leaf = chain.first()
-        val key = try {
-            Pem.privateKey(Files.readString(keyPath), leaf.publicKey)
-        } catch (e: Pem.UnsupportedKey) {
-            add(Codes.KEY_MISMATCH, spec, "$keyPath: ${e.message}")
+        val keyText = Files.readString(keyPath)
+        val key = if (Pem.blockTypes(keyText).none { it.endsWith("PRIVATE KEY") }) {
+            add(Codes.FILE_MALFORMED, spec, "$keyPath holds no PEM private key")
             null
+        } else {
+            try {
+                Pem.privateKey(keyText, leaf.publicKey)
+            } catch (e: Pem.UnsupportedKey) {
+                add(Codes.KEY_MISMATCH, spec, "$keyPath: ${e.message}")
+                null
+            } catch (_: IllegalArgumentException) {
+                add(Codes.KEY_MISMATCH, spec, "$keyPath: the private key could not be parsed")
+                null
+            }
         }
         if (key != null && !Pem.matches(key, leaf.publicKey)) {
             add(Codes.KEY_MISMATCH, spec, "$keyPath is not the private key for the certificate in tls.crt")

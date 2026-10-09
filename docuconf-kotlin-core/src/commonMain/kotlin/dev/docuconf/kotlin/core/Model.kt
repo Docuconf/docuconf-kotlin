@@ -10,6 +10,8 @@ public enum class VarType(public val wire: String) {
     URL("url"),
     ENUM("enum"),
     LIST("list"),
+    /** A set of secret keys that are all valid at once, for rotation without an outage (SPEC §4.3). */
+    KEY_SET("keySet"),
     JSON("json"),
 }
 
@@ -70,7 +72,11 @@ public enum class Reload(public val wire: String) {
     WATCH("watch"),
 }
 
-/** `deprecated` on a variable or file input. */
+/**
+ * `deprecated` on a variable or file input (SPEC §4.2): the platform should stop setting it. [message]
+ * says what to use instead, or why the input is going away (not blank, at most 500 characters), and
+ * [replacedBy] names the input that replaces it. A required input cannot be deprecated.
+ */
 public data class Deprecation(val message: String, val replacedBy: String? = null)
 
 /** One environment variable in the contract (SPEC §4.2). Defaults are held as [JsonValue]s. */
@@ -100,7 +106,7 @@ public data class VarSpec(
     val schemes: List<String>? = null,
     // enum
     val values: List<String>? = null,
-    // list
+    // list and keySet: a key set travels in a list's encodings, with the same separator (SPEC §5)
     val items: ListItems? = null,
     val listEncoding: ListEncoding = ListEncoding.CSV,
     val separator: String = ",",
@@ -112,6 +118,11 @@ public data class VarSpec(
     // string list item lengths, in characters (Unicode code points)
     val itemMinLength: Int? = null,
     val itemMaxLength: Int? = null,
+    // keySet: the number of keys (null is the default, 1 and 2) and each key's length in characters
+    val minKeys: Int? = null,
+    val maxKeys: Int? = null,
+    val keyMinLength: Int? = null,
+    val keyMaxLength: Int? = null,
     // json
     val schema: JsonValue? = null,
     /** Longer docs in CommonMark (SPEC §4.2): the KDoc after its first sentence, or `@Doc(details = ...)`. Never read at runtime. */
@@ -172,6 +183,17 @@ public data class OverlaySpec(
     val mountDir: String get() = path.substringBeforeLast('/').ifEmpty { "/" }
 }
 
+/**
+ * Profiles (SPEC §4.4): values from per-profile config files baked into the image. [selector] is the
+ * variable that names the profile, [default] the profile in effect when it is unset, and [defaults]
+ * each profile's values by variable name, in the platform's typed form (as a variable's `default`).
+ */
+public data class ProfilesSpec(
+    val selector: String,
+    val default: String,
+    val defaults: Map<String, Map<String, JsonValue>> = emptyMap(),
+)
+
 /** `metadata.generator`. */
 public data class Generator(val language: String, val sdk: String, val version: String)
 
@@ -183,6 +205,7 @@ public data class Contract(
     val files: List<FileSpec> = emptyList(),
     val appVersion: String? = null,
     val overlays: List<OverlaySpec> = emptyList(),
+    val profiles: ProfilesSpec? = null,
 ) {
     public fun variable(name: String): VarSpec? = vars.firstOrNull { it.name == name }
     public fun file(name: String): FileSpec? = files.firstOrNull { it.name == name }

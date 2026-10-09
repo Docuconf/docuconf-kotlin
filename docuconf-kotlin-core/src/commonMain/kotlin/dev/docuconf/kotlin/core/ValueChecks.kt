@@ -8,23 +8,16 @@ package dev.docuconf.kotlin.core
 public object ValueChecks {
     private val urlSyntax = Regex("^[a-zA-Z][a-zA-Z0-9+.-]*://[^\\s]+$")
     private val intSyntax = Regex("^[+-]?[0-9]+$")
-    private val floatSyntax = Regex("^[+-]?([0-9]+\\.?[0-9]*|\\.[0-9]+)([eE][+-]?[0-9]+)?$")
-    private val secondsSyntax = Regex("^([0-9]+)(?:\\.([0-9]{1,9}))?$")
-    private val timespanSyntax = Regex("^(?:([0-9]+)\\.)?([0-9]{1,2}):([0-9]{2}):([0-9]{2})(?:\\.([0-9]{1,7}))?$")
+    // SPEC §5: digits on both sides of an optional point, an optional exponent; never hex, inf or nan.
+    private val floatSyntax = Regex("^[+-]?[0-9]+(\\.[0-9]+)?([eE][+-]?[0-9]+)?$")
 
     /**
-     * Options that adapt the checks to the host library.
+     * Options for the checks. Parsing itself is exact and has no options (SPEC §5): a host library
+     * that is more lenient gets these checks in front of it, so it never sees the extra forms.
      *
-     * @property trimListItems whether the host trims whitespace around csv items (Hoplite does).
-     * @property hostDuration an extra duration parser for forms the host also accepts (Hoplite's `30s`).
-     * @property lenientBools other strings the host accepts as booleans (Hoplite: t, f, 1, 0, yes, no).
-     * @property durationHint the forms named when a duration does not parse, when the host accepts more
-     *   than the encoding (`an ISO 8601 duration like PT30S, or Go syntax like 30s`).
+     * @property durationHint the forms named when a duration does not parse, instead of the encoding's.
      */
     public data class Options(
-        val trimListItems: Boolean = false,
-        val hostDuration: ((String) -> Long?)? = null,
-        val lenientBools: Set<String> = emptySet(),
         val durationHint: String? = null,
     )
 
@@ -45,7 +38,7 @@ public object ValueChecks {
      *
      * [value] is null when the variable is unset or has violations. Otherwise it is a `String`
      * (string, url, enum), `Long` (int), `Double` (float), `Boolean` (bool), nanoseconds as `Long`
-     * (duration), `List<String>` or `List<Long>` (list), or a [JsonValue] (json).
+     * (duration), `List<String>` or `List<Long>` (list), a [KeySet] (keySet), or a [JsonValue] (json).
      */
     public data class Parsed(val violations: List<Violation>, val value: Any?)
 
@@ -73,6 +66,12 @@ public object ValueChecks {
         }
         return Checker(spec, raw!!, options).run()
     }
+
+    /**
+     * Checks a list's or key set's items given one by one (from a config-file overlay's native list),
+     * as a present value: no items is an empty list, not an unset one.
+     */
+    public fun parseItems(spec: VarSpec, items: List<String>, options: Options = Options()): Parsed = Checker(spec, "", options).runList(items)
 
     /**
      * The items of an `indexed` list (SPEC §5): `NAME__0`, `NAME__1`, ... up to the first index
@@ -108,25 +107,16 @@ public object ValueChecks {
         return parse(spec, null, options, items = indexedItems(spec.name, env))
     }
 
-    /** Parses a duration in the variable's encoding, or with the host parser; null when neither accepts it. */
-    public fun parseDuration(raw: String, encoding: DurationEncoding, hostDuration: ((String) -> Long?)? = null): Long? {
-        val native = when (encoding) {
-            DurationEncoding.GO -> Durations.parseGo(raw)
-            DurationEncoding.ISO8601 -> Durations.parseIso(raw)
-            DurationEncoding.SECONDS -> secondsSyntax.matchEntire(raw)?.let { m ->
-                val whole = m.groupValues[1].toLongOrNull() ?: return@let null
-                whole * Durations.NANOS_PER_SECOND + m.groupValues[2].padEnd(9, '0').ifEmpty { "0" }.toLong()
-            }
-            DurationEncoding.TIMESPAN -> timespanSyntax.matchEntire(raw)?.let { m ->
-                val (d, h, min, s, f) = m.destructured
-                val days = if (d.isEmpty()) 0 else d.toLongOrNull() ?: return@let null
-                if (h.toInt() > 23 || min.toInt() > 59 || s.toInt() > 59) return@let null
-                days * 24 * Durations.NANOS_PER_HOUR + h.toLong() * Durations.NANOS_PER_HOUR +
-                    min.toLong() * Durations.NANOS_PER_MINUTE + s.toLong() * Durations.NANOS_PER_SECOND +
-                    (if (f.isEmpty()) 0L else f.padEnd(9, '0').toLong())
-            }
-        }
-        return native ?: hostDuration?.invoke(raw)
+    /**
+     * Parses a duration in exactly its encoding's grammar (SPEC §5): Go's `time.ParseDuration` for
+     * `go`, `P[nD][T[nH][nM][nS]]` for `iso8601`, unsigned decimal seconds for `seconds`, and
+     * `[d.]hh:mm:ss[.f]` for `timespan`. Null when it does not parse or overflows.
+     */
+    public fun parseDuration(raw: String, encoding: DurationEncoding): Long? = when (encoding) {
+        DurationEncoding.GO -> Durations.parseGoWire(raw)
+        DurationEncoding.ISO8601 -> Durations.parseIso(raw)
+        DurationEncoding.SECONDS -> Durations.parseSeconds(raw)
+        DurationEncoding.TIMESPAN -> Durations.parseTimespan(raw)
     }
 
     private class Checker(val spec: VarSpec, val raw: String, val options: Options) {
@@ -149,11 +139,12 @@ public object ValueChecks {
                 VarType.URL -> checkUrl()
                 VarType.ENUM -> checkEnum()
                 VarType.LIST -> checkList()
+                VarType.KEY_SET -> checkKeySet()
                 VarType.JSON -> checkJson()
             },
         )
 
-        fun runList(items: List<String>): Parsed = done(checkItems(items))
+        fun runList(items: List<String>): Parsed = done(if (spec.type == VarType.KEY_SET) checkKeys(items) else checkItems(items))
 
         fun checkString(): String {
             val length = codePointCount(raw)
@@ -194,21 +185,20 @@ public object ValueChecks {
         }
 
         fun checkBool(): Boolean? {
-            val lower = raw.lowercase()
-            if (lower != "true" && lower != "false" && lower !in options.lenientBools) {
-                add(Codes.INVALID_TYPE, "$shown is not true or false")
-                return null
-            }
-            return lower == "true" || lower in truthy
+            // true or false in any case, and nothing else: never 1, 0, t, f, yes or no (SPEC §5).
+            if (raw.equals("true", ignoreCase = true)) return true
+            if (raw.equals("false", ignoreCase = true)) return false
+            add(Codes.INVALID_TYPE, "$shown is not true or false")
+            return null
         }
 
         fun checkDuration(): Long? {
-            val nanos = parseDuration(raw, spec.durationEncoding, options.hostDuration)
+            val nanos = parseDuration(raw, spec.durationEncoding)
             if (nanos == null) {
                 val expected = options.durationHint ?: when (spec.durationEncoding) {
                     DurationEncoding.GO -> "a Go duration like 1m30s"
                     DurationEncoding.ISO8601 -> "an ISO 8601 duration like PT30S"
-                    DurationEncoding.SECONDS -> "a number of seconds like 90"
+                    DurationEncoding.SECONDS -> "a number of seconds like 90 or 1.5"
                     DurationEncoding.TIMESPAN -> "a timespan like 00:01:30"
                 }
                 add(Codes.INVALID_TYPE, "$shown is not a duration; expected $expected")
@@ -245,13 +235,58 @@ public object ValueChecks {
         }
 
         fun checkList(): List<Any>? = when (spec.listEncoding) {
-            ListEncoding.CSV -> checkItems(raw.split(spec.separator).map { if (options.trimListItems) it.trim() else it })
+            // Split on every separator, never trimmed: `a, b` is `a` and ` b` (SPEC §5).
+            ListEncoding.CSV -> checkItems(raw.split(spec.separator))
             ListEncoding.JSON -> checkJsonList()
             // One variable per item; callers pass the items to parse(items = ...). A single value is one item.
             ListEncoding.INDEXED -> checkItems(listOf(raw))
         }
 
         fun itemLabel(i: Int, item: String) = if (spec.secret) "item $i" else "item $i ${quote(item)}"
+
+        /** A key set's keys from the raw value, split in its list encoding. */
+        fun checkKeySet(): KeySet? = when (spec.listEncoding) {
+            ListEncoding.CSV -> checkKeys(raw.split(spec.separator))
+            ListEncoding.JSON -> {
+                val parsed = try {
+                    JsonValue.parse(raw)
+                } catch (_: JsonSyntaxException) {
+                    null
+                }
+                val keys = (parsed as? JsonValue.Arr)?.items?.map { (it as? JsonValue.Str)?.value }
+                if (keys == null || keys.any { it == null }) {
+                    // Never the parser's message: it could quote a key.
+                    add(Codes.INVALID_TYPE, "is not a JSON array of strings")
+                    null
+                } else {
+                    checkKeys(keys.map { it!! })
+                }
+            }
+            ListEncoding.INDEXED -> checkKeys(listOf(raw))
+        }
+
+        /**
+         * A key set's keys (SPEC §4.3): each key's length, which is never zero, and then their number.
+         * Keys are secret, so no message holds one.
+         */
+        fun checkKeys(keys: List<String>): KeySet? {
+            keys.forEachIndexed { i, key ->
+                val n = codePointCount(key)
+                when {
+                    n == 0 -> add(Codes.OUT_OF_RANGE, "key $i is empty")
+                    spec.keyMinLength != null && n < spec.keyMinLength -> add(Codes.OUT_OF_RANGE, "key $i is $n characters, below keyMinLength ${spec.keyMinLength}")
+                    spec.keyMaxLength != null && n > spec.keyMaxLength -> add(Codes.OUT_OF_RANGE, "key $i is $n characters, above keyMaxLength ${spec.keyMaxLength}")
+                }
+            }
+            if (out.isNotEmpty()) return null
+            val min = spec.minKeys ?: DEFAULT_MIN_KEYS
+            val max = spec.maxKeys ?: DEFAULT_MAX_KEYS
+            if (keys.size < min) add(Codes.TOO_FEW_ITEMS, "has ${plural(keys.size, "key")}, below minKeys $min")
+            if (keys.size > max) add(Codes.TOO_MANY_ITEMS, "has ${plural(keys.size, "key")}, above maxKeys $max")
+            return KeySet(keys)
+        }
+
+        fun plural(n: Int, noun: String) = if (n == 1) "1 $noun" else "$n ${noun}s"
 
         /** Items given as strings (csv, indexed). */
         fun checkItems(items: List<String>): List<Any>? {
@@ -338,7 +373,11 @@ public object ValueChecks {
         }
     }
 
-    private val truthy = setOf("t", "1", "yes")
+    /** A key set's `minKeys` when the contract leaves it out (SPEC §4.3). */
+    public const val DEFAULT_MIN_KEYS: Int = 1
+
+    /** A key set's `maxKeys` when the contract leaves it out (SPEC §4.3). */
+    public const val DEFAULT_MAX_KEYS: Int = 2
 
     /**
      * Checks a json value's wire string against `maxLength` (SPEC §4.3): the raw value as received,

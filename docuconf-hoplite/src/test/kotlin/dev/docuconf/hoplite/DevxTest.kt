@@ -82,7 +82,7 @@ class DevxTest {
         assertEquals("db", c.variable("DATABASE_URL")!!.configKey)
 
         val cfg = Docuconf.load<FlatOrders> {
-            env = flatEnv("LOG_LEVEL" to "debug", "WORKER_COUNT" to "12", "REQUEST_TIMEOUT" to "1m30s", "ALLOWED_ORIGINS" to "https://a,https://b")
+            env = flatEnv("LOG_LEVEL" to "debug", "WORKER_COUNT" to "12", "REQUEST_TIMEOUT" to "PT1M30S", "ALLOWED_ORIGINS" to "https://a,https://b")
             warn = {}
         }
         assertEquals(Level.DEBUG, cfg.logLevel)
@@ -209,14 +209,14 @@ class DevxTest {
     fun durationErrorsNameTheExpectedForm() {
         val e = assertFailsWith<ConfigViolationException> { Docuconf.load<FlatOrders> { env = flatEnv("REQUEST_TIMEOUT" to "soon"); warn = {} } }
         assertEquals(
-            "\"soon\" is not a duration; expected an ISO 8601 duration like PT30S, or Go syntax like 30s or 1m30s",
+            "\"soon\" is not a duration; expected an ISO 8601 duration like PT30S",
             e.violations.single().message,
         )
         // Bounds written in ISO 8601 are exported in Go syntax, as the spec requires.
         assertEquals("5m", Docuconf.contract(FlatOrders::class, "orders").variable("REQUEST_TIMEOUT")!!.maxDuration)
 
         data class K(@Doc("Idle timeout here") val idle: kotlin.time.Duration = 5.seconds)
-        assertEquals(90.seconds, Docuconf.load<K> { env = mapOf("IDLE" to "1m30s") }.idle)
+        assertEquals(90.seconds, Docuconf.load<K> { env = mapOf("IDLE" to "PT1M30S") }.idle)
     }
 
     @Test
@@ -286,9 +286,11 @@ class DevxTest {
     }
 
     @Test
-    fun emptyCsvItemsAreInvalid() {
-        val e = assertFailsWith<ConfigViolationException> { Docuconf.load<FlatOrders> { env = flatEnv("ALLOWED_ORIGINS" to ","); warn = {} } }
-        assertEquals(listOf(Violation(Codes.INVALID_TYPE, "ALLOWED_ORIGINS", "items 0, 1 are empty; separate items with a single ,")), e.violations)
+    fun csvItemsAreNeverTrimmed() {
+        // SPEC §5: split on every separator, never trimmed, so an empty item is an item; bound it with
+        // @ItemLength(min = 1) to reject one.
+        val cfg = Docuconf.load<FlatOrders> { env = flatEnv("ALLOWED_ORIGINS" to " https://a,,https://b "); warn = {} }
+        assertEquals(listOf(" https://a", "", "https://b "), cfg.allowedOrigins)
     }
 
     @Test

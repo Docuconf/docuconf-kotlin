@@ -32,8 +32,11 @@ import kotlin.reflect.jvm.isAccessible
 /** A variable and where Hoplite binds it in the config class tree. */
 internal data class VarBinding(val spec: VarSpec, val path: List<String>, val type: KType)
 
-/** A file input and where it is bound. [valueType] is `T` of `ConfigFile<T>`. */
-internal data class FileBinding(val spec: FileSpec, val path: List<String>, val type: KType, val valueType: KType?)
+/**
+ * A file input and where it is bound. [type] is the file input type (`ConfigFile<T>`, without
+ * [Watched]), [valueType] is `T` of `ConfigFile<T>`, and [watched] says the parameter is `Watched<...>`.
+ */
+internal data class FileBinding(val spec: FileSpec, val path: List<String>, val type: KType, val valueType: KType?, val watched: Boolean = false)
 
 /** Everything docuconf reads from a config class. */
 internal data class Declaration(
@@ -94,6 +97,7 @@ internal object DeclarationReader {
     private val variableOnly = listOf(
         Min::class, Max::class, DecimalMin::class, DecimalMax::class, DurationMin::class, DurationMax::class,
         Url::class, Schemes::class, OneOf::class, Items::class, ItemMin::class, ItemMax::class, Examples::class,
+        Separator::class, Keys::class, KeyLength::class,
     )
 
     private class Reader(val root: KClass<*>, val prefix: String) {
@@ -137,7 +141,17 @@ internal object DeclarationReader {
                 val optional = parentOptional || p.isOptional || t.isMarkedNullable
                 val group = p.annotations.filterIsInstance<Group>().firstOrNull()?.value ?: inheritedGroup
                 when {
-                    kc in fileTypes -> fileInput(k, p, kc, here, optional, group)
+                    kc in fileTypes -> fileInput(k, p, t, here, optional, group, watched = false)
+                    kc == Watched::class -> {
+                        val inner = t.arguments.firstOrNull()?.type
+                        val ik = inner?.classifier as? KClass<*>
+                        when {
+                            inner == null || ik !in fileTypes ->
+                                errors += "${where(here)}: Watched applies to file inputs (ConfigFile, TlsKeyPair, CaBundle, Keystore, TextFile, BinaryFile), " +
+                                    "not ${ik?.simpleName ?: inner}; environment variables are read once, when the process starts"
+                            else -> fileInput(k, p, inner, here, optional, group, watched = true)
+                        }
+                    }
                     isScalar(kc, t) -> variable(k, p, kc, here, env?.let { listOf(it) } ?: hereEnv, optional, group, defaults)
                     kc == Map::class -> warnings += "${where(here)}: maps cannot be set by the platform through environment variables; left out of the contract (file-only)"
                     kc.isData || kc.primaryConstructor != null && !kc.java.isInterface && kc.java.`package`?.name?.startsWith("java.") != true -> {
@@ -161,11 +175,13 @@ internal object DeclarationReader {
                 }
             }
             if (a.reload == Reload.WATCH) {
-                // hoplite-watch's ReloadableConfig re-runs Hoplite alone, so a reload would bypass
-                // docuconf's checks and file inputs. Rather than export a promise it does not keep
-                // (SPEC §11.2 item 8), docuconf rejects watch.
-                errors += "$p: reload = WATCH is not supported; docuconf for Hoplite validates configuration once, at boot. " +
-                    "Use Reload.RESTART: the platform renders an immutable ConfigMap and rolls the pods on change."
+                // An overlay feeds values into the whole config class, which Hoplite binds once, and
+                // hoplite-watch's ReloadableConfig would re-run Hoplite without docuconf's checks.
+                // Rather than export a promise it does not keep (SPEC §11.2 item 8), docuconf rejects
+                // watch here. File inputs can reload: declare them Watched<...>.
+                errors += "$p: reload = WATCH is not supported for overlays; docuconf for Hoplite binds the config class once, at boot. " +
+                    "Use Reload.RESTART: the platform renders an immutable ConfigMap and rolls the pods on change. " +
+                    "(A file input can reload: declare it Watched<...>.)"
             }
             return OverlaySpec(
                 name = a.name,
@@ -221,7 +237,14 @@ internal object DeclarationReader {
                         p.annotations.any { it is Schemes || it is Url } -> "$name cannot be combined with @Schemes or @Url"
                         else -> null
                     }
-                    is Items -> if (type != VarType.LIST) "$name applies to List or Set, not $kind" else null
+                    is Items -> when (type) {
+                        VarType.LIST -> null
+                        VarType.KEY_SET -> "$name applies to List or Set; a KeySet's number of keys is @Keys(min, max)"
+                        else -> "$name applies to List or Set, not $kind"
+                    }
+                    is ItemLength -> if (type == VarType.KEY_SET) "$name applies to List<String>; a KeySet's key length is @KeyLength(min, max)" else null
+                    is Keys, is KeyLength -> if (type != VarType.KEY_SET) "$name applies to KeySet, not $kind" else null
+                    is Separator -> if (type != VarType.LIST && type != VarType.KEY_SET) "$name applies to List, Set or KeySet, not $kind" else null
                     is FileInput, is Format, is Tls, is MinCertificates, is KeystoreSpec ->
                         "$name applies to file inputs (ConfigFile, TlsKeyPair, CaBundle, Keystore, TextFile, BinaryFile), not $kind"
                     else -> null
@@ -265,7 +288,8 @@ internal object DeclarationReader {
             val (doc, details) = docs(owner, p, path)
             val itemClass = p.type.arguments.firstOrNull()?.type?.classifier
             // A List<Secret> is a secret list, such as a key set rotated with two keys valid at once (SPEC §6.1).
-            val secret = k == Secret::class || ((k == List::class || k == Set::class) && itemClass == Secret::class)
+            // A KeySet is always secret (SPEC §4.3).
+            val secret = k == Secret::class || k == KeySet::class || ((k == List::class || k == Set::class) && itemClass == Secret::class)
             val length = a.filterIsInstance<Length>().firstOrNull()
             val items = a.filterIsInstance<Items>().firstOrNull()
             val schemes = a.filterIsInstance<Schemes>().firstOrNull()?.value?.toList()
@@ -284,6 +308,7 @@ internal object DeclarationReader {
                 k == java.time.Duration::class || k == kotlin.time.Duration::class -> VarType.DURATION
                 k.java.isEnum -> VarType.ENUM
                 k == List::class || k == Set::class -> VarType.LIST
+                k == KeySet::class -> VarType.KEY_SET
                 k == Json::class -> VarType.JSON
                 else -> error("unreachable")
             }
@@ -334,7 +359,7 @@ internal object DeclarationReader {
                 errors += "${where(path)}: @ItemMin and @ItemMax only apply to List<Int> or List<Long>"
             }
             val itemLength = a.filterIsInstance<ItemLength>().firstOrNull()
-            if (itemLength != null && listItems != ListItems.STRING) {
+            if (itemLength != null && listItems != ListItems.STRING && type != VarType.KEY_SET) {
                 errors += "${where(path)}: @ItemLength only applies to List<String>"
             }
             val stringItems = itemLength?.takeIf { listItems == ListItems.STRING }
@@ -359,6 +384,10 @@ internal object DeclarationReader {
             val deprecated = a.filterIsInstance<DeprecatedInput>().firstOrNull()?.let { Deprecation(it.message, it.replacedBy.ifEmpty { null }) }
             // Where Hoplite reads the value in a config file, such as a platform overlay (SPEC §4.7).
             val configKey = path.joinToString(KEY_SEPARATOR)
+            val keys = a.filterIsInstance<Keys>().firstOrNull()
+            val keyLength = a.filterIsInstance<KeyLength>().firstOrNull()
+            val separator = a.filterIsInstance<Separator>().firstOrNull()?.value
+            if (separator != null && separator.isEmpty()) errors += "${where(path)}: @Separator cannot be empty"
             if (type == VarType.ENUM && values == null) type = VarType.STRING
             vars += VarBinding(
                 VarSpec(
@@ -377,8 +406,8 @@ internal object DeclarationReader {
                     max = max,
                     minDuration = durationBound(a.filterIsInstance<DurationMin>().firstOrNull()?.value, "DurationMin", path),
                     maxDuration = durationBound(a.filterIsInstance<DurationMax>().firstOrNull()?.value, "DurationMax", path),
-                    // The platform renders ISO 8601 (PT1M30S). docuconf's duration decoders also take
-                    // Go syntax (1m30s), for people typing values locally.
+                    // The platform renders ISO 8601 (PT1M30S), what java.time.Duration and Hoplite read;
+                    // docuconf accepts exactly that grammar at boot (SPEC §5).
                     durationEncoding = DurationEncoding.ISO8601,
                     minLength = length?.min?.takeIf { it >= 0 },
                     maxLength = length?.max?.takeIf { it >= 0 },
@@ -386,14 +415,20 @@ internal object DeclarationReader {
                     schemes = schemes,
                     values = values,
                     items = listItems,
-                    // Hoplite splits a string on "," for lists (and trims each item).
+                    // docuconf splits the value itself, on every separator and without trimming
+                    // (SPEC §5), and hands Hoplite the items.
                     listEncoding = ListEncoding.CSV,
-                    minItems = items?.min?.takeIf { it >= 0 },
-                    maxItems = items?.max?.takeIf { it >= 0 },
+                    separator = separator ?: ",",
+                    minItems = items?.min?.takeIf { it >= 0 && type == VarType.LIST },
+                    maxItems = items?.max?.takeIf { it >= 0 && type == VarType.LIST },
                     itemMin = if (intItems) maxOf(itemMin ?: Long.MIN_VALUE, Int.MIN_VALUE.toLong()) else itemMin,
                     itemMax = if (intItems) minOf(itemMax ?: Long.MAX_VALUE, Int.MAX_VALUE.toLong()) else itemMax,
                     itemMinLength = stringItems?.min?.takeIf { it >= 0 },
                     itemMaxLength = stringItems?.max?.takeIf { it >= 0 },
+                    minKeys = keys?.min?.takeIf { type == VarType.KEY_SET },
+                    maxKeys = keys?.max?.takeIf { type == VarType.KEY_SET },
+                    keyMinLength = keyLength?.min?.takeIf { it >= 0 && type == VarType.KEY_SET },
+                    keyMaxLength = keyLength?.max?.takeIf { it >= 0 && type == VarType.KEY_SET },
                     schema = schema,
                 ),
                 path,
@@ -401,7 +436,8 @@ internal object DeclarationReader {
             )
         }
 
-        fun fileInput(owner: KClass<*>, p: KParameter, k: KClass<*>, path: List<String>, optional: Boolean, group: String?) {
+        fun fileInput(owner: KClass<*>, p: KParameter, fileType: KType, path: List<String>, optional: Boolean, group: String?, watched: Boolean) {
+            val k = fileType.classifier as KClass<*>
             val a = p.annotations
             val input = a.filterIsInstance<FileInput>().firstOrNull()
             if (input == null) {
@@ -436,7 +472,7 @@ internal object DeclarationReader {
             var format: ConfigFormat? = null
             var schema: JsonValue? = null
             if (type == FileType.CONFIG) {
-                valueType = p.type.arguments.firstOrNull()?.type
+                valueType = fileType.arguments.firstOrNull()?.type
                 format = a.filterIsInstance<Format>().firstOrNull()?.value ?: when (input.path.substringAfterLast('.', "").lowercase()) {
                     "json" -> ConfigFormat.JSON
                     "yaml", "yml" -> ConfigFormat.YAML
@@ -476,10 +512,12 @@ internal object DeclarationReader {
                     pattern = a.filterIsInstance<Pattern>().firstOrNull()?.value,
                     minLength = length?.min?.takeIf { it >= 0 },
                     maxLength = length?.max?.takeIf { it >= 0 },
+                    reload = if (watched) Reload.WATCH else Reload.RESTART,
                 ),
                 path,
-                p.type,
+                fileType,
                 valueType,
+                watched,
             )
             if (tls != null && type != FileType.TLS) errors += "${where(path)}: @Tls only applies to TlsKeyPair"
         }
@@ -517,7 +555,7 @@ internal object DeclarationReader {
             k == Int::class || k == Long::class || k == Short::class || k == Byte::class ||
             k == Double::class || k == Float::class || k == Boolean::class ||
             k == java.time.Duration::class || k == kotlin.time.Duration::class ||
-            k.java.isEnum || k == Json::class ||
+            k.java.isEnum || k == Json::class || k == KeySet::class ||
             ((k == List::class || k == Set::class) && t.arguments.firstOrNull()?.type?.classifier.let { it == String::class || it == Secret::class || it == Int::class || it == Long::class })
 
     private val placeholderKey = object : PrivateKey {
@@ -550,12 +588,14 @@ internal object DeclarationReader {
             k == Set::class -> emptySet<Any>()
             k == Map::class -> emptyMap<Any, Any>()
             k == Json::class -> Json(placeholder(t.arguments.first().type!!) ?: "")
+            k == KeySet::class -> KeySet(emptyList())
             k == ConfigFile::class -> ConfigFile(nowhere, placeholder(t.arguments.first().type!!) ?: "")
             k == TlsKeyPair::class -> TlsKeyPair(nowhere, emptyList(), placeholderKey, emptyList())
             k == CaBundle::class -> CaBundle(nowhere, emptyList())
             k == Keystore::class -> Keystore(nowhere, java.security.KeyStore.getInstance("PKCS12"))
             k == TextFile::class -> TextFile(nowhere, "", false)
             k == BinaryFile::class -> BinaryFile(nowhere)
+            k == Watched::class -> Watched.of(placeholder(t.arguments.first().type!!) ?: "")
             else -> {
                 val ctor = k.primaryConstructor ?: throw IllegalArgumentException("no placeholder for ${k.simpleName}")
                 ctor.isAccessible = true

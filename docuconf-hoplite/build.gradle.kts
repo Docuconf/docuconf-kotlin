@@ -40,6 +40,23 @@ tasks.test {
     System.getenv("DOCUCONF_REQUIRE_CUE")?.let { environment("DOCUCONF_REQUIRE_CUE", it) }
     // Lets CI point the CUE vet test at a checkout of docuconf/docuconf-go.
     environment("DOCUCONF_SPEC_DIR", System.getenv("DOCUCONF_SPEC_DIR") ?: rootProject.file("../docuconf-go/spec/cue").absolutePath)
+
+    // The shared conformance suite (SPEC §12, ConformanceTest): DOCUCONF_CONFORMANCE points at
+    // docuconf-go's conformance/cases.json; without it the runner looks in a sibling checkout of
+    // docuconf-go. CI sets DOCUCONF_REQUIRE_CONFORMANCE=1 so a missing file fails instead of skipping.
+    // The shared export fixture (ConformanceExportTest) reads golden.cue from DOCUCONF_GO_DIR (else the
+    // directory above cases.json) and runs the docuconf CLI: DOCUCONF_CLI, else `docuconf` on PATH.
+    systemProperty("docuconf.rootDir", rootProject.projectDir.absolutePath)
+    // A relative path is resolved against the repository root, where ./gradlew runs.
+    val cases = System.getenv("DOCUCONF_CONFORMANCE")?.takeIf { it.isNotEmpty() }?.let { rootProject.file(it) }
+    cases?.let { environment("DOCUCONF_CONFORMANCE", it.absolutePath) }
+    System.getenv("DOCUCONF_GO_DIR")?.takeIf { it.isNotEmpty() }?.let { environment("DOCUCONF_GO_DIR", rootProject.file(it).absolutePath) }
+    System.getenv("DOCUCONF_REQUIRE_CONFORMANCE")?.let { environment("DOCUCONF_REQUIRE_CONFORMANCE", it) }
+    System.getenv("DOCUCONF_CLI")?.takeIf { it.isNotEmpty() }?.let { environment("DOCUCONF_CLI", it) }
+    // Re-run when the cases change (a missing file is allowed: the runner skips or fails itself).
+    inputs.files(cases ?: rootProject.file("../docuconf-go/conformance/cases.json"))
+        .withPropertyName("conformanceCases").withPathSensitivity(PathSensitivity.NONE)
+    testLogging { events("failed", "skipped") }
 }
 
 mavenPublishing {

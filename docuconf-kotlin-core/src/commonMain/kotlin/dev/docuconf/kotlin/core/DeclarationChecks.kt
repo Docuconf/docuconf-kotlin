@@ -72,7 +72,14 @@ public object DeclarationChecks {
             if (v.type == VarType.ENUM && v.values.isNullOrEmpty()) errors += "$p an enum needs at least one value"
             if (v.type == VarType.LIST && v.items == null) errors += "$p a list needs an item type"
             if (v.schemes != null && v.schemes.isEmpty()) errors += "$p schemes cannot be empty"
-            v.deprecated?.replacedBy?.let { if (!envName.matches(it)) errors += "$p deprecated.replacedBy must be a variable name" }
+            v.deprecated?.let { d ->
+                checkDeprecation(p, d, v.required, errors)
+                d.replacedBy?.let { if (!envName.matches(it)) errors += "$p deprecated.replacedBy must be a variable name" }
+            }
+            checkKeySet(p, v, errors)
+            if (v.type == VarType.LIST || v.type == VarType.KEY_SET) {
+                if (v.separator.isEmpty()) errors += "$p separator cannot be empty"
+            }
             // A secret's default is already an error; checking its value would only add noise.
             if (!v.secret) v.default?.let { checkDefault(v, it)?.let { msg -> errors += "$p default $msg" } }
         }
@@ -86,6 +93,10 @@ public object DeclarationChecks {
             if (!inputName.matches(f.name)) errors += "$p file input names must be DNS labels starting with a letter (^[a-z]([-a-z0-9]{0,40}[a-z0-9])?$)"
             checkDescription(p, f.description, errors)
             checkDetails(p, f.details, errors)
+            f.deprecated?.let { d ->
+                checkDeprecation(p, d, f.required, errors)
+                d.replacedBy?.let { if (!inputName.matches(it)) errors += "$p deprecated.replacedBy must be a file input name" }
+            }
             if (!isNormalisedAbsolute(f.path)) {
                 errors += "$p path \"${f.path}\" must be absolute and normalised"
             } else {
@@ -124,6 +135,7 @@ public object DeclarationChecks {
                 mounts.put(dir, "overlay ${o.name}")?.let { other -> errors += "$p shares its mount directory $dir with $other" }
             }
         }
+        contract.profiles?.let { checkProfiles(contract, it, errors) }
         if (contract.overlays.isNotEmpty()) {
             for (v in contract.vars) {
                 if (v.secret || v.configKey == null) continue
@@ -135,6 +147,62 @@ public object DeclarationChecks {
             }
         }
         return Result(errors, warnings)
+    }
+
+    /** The most characters (Unicode code points) a `deprecated` message may have (SPEC §4.2). */
+    public const val MAX_DEPRECATION_MESSAGE: Int = 500
+
+    /**
+     * `deprecated` (SPEC §4.2): a message that is not blank and at most [MAX_DEPRECATION_MESSAGE]
+     * characters, on an input that is not required, since the platform could not stop setting it.
+     */
+    private fun checkDeprecation(p: String, d: Deprecation, required: Boolean, errors: MutableList<String>) {
+        if (d.message.isBlank()) errors += "$p deprecated needs a message saying what to use instead, or why the input is going away"
+        val n = ValueChecks.codePointCount(d.message)
+        if (n > MAX_DEPRECATION_MESSAGE) errors += "$p the deprecated message is $n characters; the most is $MAX_DEPRECATION_MESSAGE"
+        if (required) errors += "$p a required input cannot be deprecated, since the platform could not stop setting it; make it optional first"
+    }
+
+    /** A key set (SPEC §4.3) is always secret, and its bounds are consistent; other types have none of its fields. */
+    private fun checkKeySet(p: String, v: VarSpec, errors: MutableList<String>) {
+        if (v.type != VarType.KEY_SET) {
+            if (v.minKeys != null || v.maxKeys != null || v.keyMinLength != null || v.keyMaxLength != null) {
+                errors += "$p minKeys, maxKeys, keyMinLength and keyMaxLength only apply to a keySet"
+            }
+            return
+        }
+        if (!v.secret) errors += "$p a keySet is always secret"
+        if (v.items != null) errors += "$p a keySet has no item type; its keys are strings"
+        if (v.minItems != null || v.maxItems != null || v.itemMinLength != null || v.itemMaxLength != null) {
+            errors += "$p a keySet uses minKeys, maxKeys, keyMinLength and keyMaxLength, not the list fields"
+        }
+        val min = v.minKeys ?: ValueChecks.DEFAULT_MIN_KEYS
+        val max = v.maxKeys ?: ValueChecks.DEFAULT_MAX_KEYS
+        if (min < 1) errors += "$p minKeys must be at least 1"
+        if (max < min) errors += "$p maxKeys must be at least minKeys ($min)"
+        v.keyMinLength?.let { if (it < 1) errors += "$p keyMinLength must be at least 1" }
+        v.keyMaxLength?.let { if (it < 1) errors += "$p keyMaxLength must be at least 1" }
+        if (v.keyMinLength != null && v.keyMaxLength != null && v.keyMinLength > v.keyMaxLength) errors += "$p keyMinLength is greater than keyMaxLength"
+    }
+
+    /**
+     * Profiles (SPEC §4.4): the selector is a declared variable, and every profile default names a
+     * declared, non-secret variable and satisfies its constraints.
+     */
+    private fun checkProfiles(contract: Contract, profiles: ProfilesSpec, errors: MutableList<String>) {
+        if (contract.variable(profiles.selector) == null) errors += "profiles: selector ${profiles.selector} must be a declared variable"
+        for ((profile, values) in profiles.defaults) {
+            for ((name, value) in values) {
+                val p = "profiles.defaults.$profile.$name:"
+                val v = contract.variable(name)
+                when {
+                    v == null -> errors += "$p not a declared variable"
+                    v.secret -> errors += "$p a secret cannot have a value in a config file baked into the image"
+                    name == profiles.selector -> errors += "$p the selector cannot come from a profile file"
+                    else -> checkDefault(v, value)?.let { errors += "$p $it" }
+                }
+            }
+        }
     }
 
     /** How deep a `configKey` may nest in an overlay (`#MaxKeyDepth` in the meta-schema). */
@@ -190,6 +258,7 @@ public object DeclarationChecks {
                 v.copy(listEncoding = ListEncoding.JSON) to d.toString()
             }
             VarType.JSON -> v to d.toString()
+            VarType.KEY_SET -> return "a key set cannot have a default"
         }
         if (v.type != VarType.STRING && raw.isEmpty()) return "cannot be empty"
         // A non-RE2 pattern is reported on its own; check the rest of the default without it.

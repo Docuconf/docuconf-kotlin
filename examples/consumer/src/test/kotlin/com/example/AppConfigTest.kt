@@ -19,14 +19,14 @@ class AppConfigTest {
     @Test
     fun reportsEveryProblem() {
         val e = assertFailsWith<ConfigViolationException> {
-            Docuconf.load<AppConfig> { env = mapOf("PORT" to "0", "REQUEST_TIMEOUT" to "5m") }
+            Docuconf.load<AppConfig> { env = mapOf("PORT" to "0", "REQUEST_TIMEOUT" to "PT5M") }
         }
         assertEquals(
             """
             docuconf: 3 configuration problems:
               PORT: out_of_range: "0" is below min 1
               DATABASE_URL: missing_required: required, but not set
-              REQUEST_TIMEOUT: out_of_range: "5m" is longer than max 1m
+              REQUEST_TIMEOUT: out_of_range: "PT5M" is longer than max 1m
             """.trimIndent(),
             e.message,
         )

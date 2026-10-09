@@ -11,6 +11,7 @@ import com.sksamuel.hoplite.StringNode
 import com.sksamuel.hoplite.Undefined
 import com.sksamuel.hoplite.transformer.PathNormalizer
 import dev.docuconf.kotlin.core.Codes
+import dev.docuconf.kotlin.core.ContractFirst
 import dev.docuconf.kotlin.core.ConfigFormat
 import dev.docuconf.kotlin.core.DeclarationException
 import dev.docuconf.kotlin.core.JsonSchemaValidator
@@ -106,63 +107,42 @@ internal object Overlays {
     }
 
     /**
-     * Checks one overlay value exactly like an environment value (SPEC §4.7): the node is turned into
-     * the string the variable would have in the environment, then checked with [ValueChecks].
+     * Checks one overlay value exactly like an environment value (SPEC §4.7): the native value is
+     * turned into the wire string it stands for and parsed in the variable's encoding, by the code
+     * the contract-first mode uses ([ContractFirst.parseNative]). Returns the violations and, except
+     * for a `json` value (which Hoplite merges with the base files itself), the parsed value.
      */
-    fun check(v: VarBinding, node: Node, overlay: OverlaySpec, options: ValueChecks.Options): List<Violation> {
+    fun check(v: VarBinding, node: Node, overlay: OverlaySpec): ValueChecks.Parsed {
         val where = "(from overlay ${overlay.name}, key ${v.spec.configKey})"
         if (v.spec.secret) {
-            return listOf(
-                Violation(
-                    Codes.INVALID_TYPE, v.spec.name,
-                    "is set in overlay ${overlay.name}; overlays are ConfigMaps, so a secret must come from the environment",
+            return ValueChecks.Parsed(
+                listOf(
+                    Violation(
+                        Codes.INVALID_TYPE, v.spec.name,
+                        "is set in overlay ${overlay.name}; overlays are ConfigMaps, so a secret must come from the environment",
+                    ),
                 ),
+                null,
             )
         }
-        fun bad(what: String) = listOf(Violation(Codes.INVALID_TYPE, v.spec.name, "is $what, not a ${v.spec.type.wire} $where"))
-        var spec = v.spec.copy(required = false)
-        val raw: String = when (v.spec.type) {
-            VarType.LIST -> when (node) {
-                is ArrayNode -> {
-                    spec = spec.copy(listEncoding = ListEncoding.JSON)
-                    // Hoplite's YAML parser reads every scalar as a string, so an int item can arrive as
-                    // "5"; write integer-looking strings as JSON numbers so the int checks see them.
-                    node.elements.joinToString(",", "[", "]") { e ->
-                        val text = (e as? StringNode)?.value
-                        if (spec.items == ListItems.INT && text != null && integerText.matches(text)) text else toJson(e).toString()
-                    }
-                }
-                is StringNode -> node.value
-                else -> return bad(kind(node))
-            }
-            VarType.JSON -> when {
+        val spec = v.spec.copy(required = false)
+        if (v.spec.type == VarType.JSON) {
+            val raw = when {
                 node is StringNode -> node.value
                 // Hoplite's YAML parser reads every scalar as a string; validate as config files are.
                 overlay.format == ConfigFormat.YAML && spec.schema != null -> {
                     // No wire string: maxLength measures the compact JSON (SPEC §4.3).
-                    ValueChecks.jsonMaxLength(spec, toJson(node).toString())?.let { return listOf(it.copy(message = "${it.message} $where")) }
-                    return JsonSchemaValidator.validate(spec.schema!!, toJson(node), lenientScalars = true)
+                    ValueChecks.jsonMaxLength(spec, toJson(node).toString())?.let { return ValueChecks.Parsed(listOf(it.copy(message = "${it.message} $where")), null) }
+                    val problems = JsonSchemaValidator.validate(spec.schema!!, toJson(node), lenientScalars = true)
                         .map { Violation(Codes.SCHEMA_MISMATCH, v.spec.name, "$it $where") }
+                    return ValueChecks.Parsed(problems, null)
                 }
                 else -> toJson(node).toString()
             }
-            else -> when (node) {
-                is StringNode -> node.value
-                is LongNode -> node.value.toString()
-                is DoubleNode -> node.value.toString()
-                is BooleanNode -> node.value.toString()
-                else -> return bad(kind(node))
-            }
+            val parsed = ValueChecks.parse(spec, raw)
+            return ValueChecks.Parsed(parsed.violations.map { it.copy(message = "${it.message} $where") }, null)
         }
-        if (raw.isEmpty() && v.spec.type != VarType.STRING) return bad("empty")
-        return ValueChecks.check(spec, raw, options).map { it.copy(message = "${it.message} $where") }
-    }
-
-    private val integerText = Regex("^-?(0|[1-9][0-9]*)$")
-
-    private fun kind(n: Node) = when (n) {
-        is MapNode -> "a map"
-        is ArrayNode -> "a list"
-        else -> "not a scalar"
+        if (node is MapNode) return ValueChecks.Parsed(listOf(Violation(Codes.INVALID_TYPE, v.spec.name, "is a map, not a ${v.spec.type.wire} $where")), null)
+        return ContractFirst.parseNative(spec, toJson(node), overlay)
     }
 }

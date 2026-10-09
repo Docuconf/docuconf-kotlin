@@ -20,7 +20,6 @@ kotlin {
             implementation(kotlin("test"))
         }
         jvmTest.dependencies {
-            // The conformance runner reports each case as its own JUnit test.
             implementation(project.dependencies.platform(libs.junit.bom))
             implementation(libs.junit.jupiter)
             runtimeOnly(libs.junit.launcher)
@@ -28,20 +27,8 @@ kotlin {
     }
 }
 
-tasks.named<Test>("jvmTest") {
-    // The shared conformance suite (SPEC §12): DOCUCONF_CONFORMANCE points at docuconf-go's
-    // conformance/cases.json; without it the runner looks in a sibling checkout of docuconf-go.
-    // CI sets DOCUCONF_REQUIRE_CONFORMANCE=1 so a missing file fails instead of skipping.
-    systemProperty("docuconf.rootDir", rootProject.projectDir.absolutePath)
-    // A relative DOCUCONF_CONFORMANCE is resolved against the repository root, where ./gradlew runs.
-    val cases = System.getenv("DOCUCONF_CONFORMANCE")?.takeIf { it.isNotEmpty() }?.let { rootProject.file(it) }
-    cases?.let { environment("DOCUCONF_CONFORMANCE", it.absolutePath) }
-    System.getenv("DOCUCONF_REQUIRE_CONFORMANCE")?.let { environment("DOCUCONF_REQUIRE_CONFORMANCE", it) }
-    // Re-run when the cases change (a missing file is allowed: the runner skips or fails itself).
-    inputs.files(cases ?: rootProject.file("../docuconf-go/conformance/cases.json"))
-        .withPropertyName("conformanceCases").withPathSensitivity(PathSensitivity.NONE)
-    testLogging { events("failed", "skipped"); showStandardStreams = true }
-}
+// The shared conformance suite (SPEC §12) runs in docuconf-hoplite's tests, through the contract-first
+// mode with files (Docuconf.checkContract), since its file inputs and overlays need the JVM.
 
 mavenPublishing {
     publishToMavenCentral()
