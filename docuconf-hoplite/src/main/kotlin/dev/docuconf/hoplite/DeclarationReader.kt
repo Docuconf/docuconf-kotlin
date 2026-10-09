@@ -263,7 +263,9 @@ internal object DeclarationReader {
             val name = envName(envPath)
             names.getOrPut(name) { ArrayList() } += path
             val (doc, details) = docs(owner, p, path)
-            val secret = k == Secret::class
+            val itemClass = p.type.arguments.firstOrNull()?.type?.classifier
+            // A List<Secret> is a secret list, such as a key set rotated with two keys valid at once (SPEC §6.1).
+            val secret = k == Secret::class || ((k == List::class || k == Set::class) && itemClass == Secret::class)
             val length = a.filterIsInstance<Length>().firstOrNull()
             val items = a.filterIsInstance<Items>().firstOrNull()
             val schemes = a.filterIsInstance<Schemes>().firstOrNull()?.value?.toList()
@@ -293,13 +295,12 @@ internal object DeclarationReader {
             }
             var listItems: ListItems? = null
             var schema: JsonValue? = null
-            val itemClass = p.type.arguments.firstOrNull()?.type?.classifier
             if (type == VarType.LIST) {
                 listItems = when (itemClass) {
-                    String::class -> ListItems.STRING
+                    String::class, Secret::class -> ListItems.STRING
                     Int::class, Long::class -> ListItems.INT
                     else -> {
-                        errors += "${where(path)}: lists must hold String, Int or Long; other items cannot be set through one environment variable"
+                        errors += "${where(path)}: lists must hold String, Secret, Int or Long; other items cannot be set through one environment variable"
                         ListItems.STRING
                     }
                 }
@@ -517,7 +518,7 @@ internal object DeclarationReader {
             k == Double::class || k == Float::class || k == Boolean::class ||
             k == java.time.Duration::class || k == kotlin.time.Duration::class ||
             k.java.isEnum || k == Json::class ||
-            ((k == List::class || k == Set::class) && t.arguments.firstOrNull()?.type?.classifier.let { it == String::class || it == Int::class || it == Long::class })
+            ((k == List::class || k == Set::class) && t.arguments.firstOrNull()?.type?.classifier.let { it == String::class || it == Secret::class || it == Int::class || it == Long::class })
 
     private val placeholderKey = object : PrivateKey {
         override fun getAlgorithm() = "none"

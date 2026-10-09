@@ -260,7 +260,12 @@ public object Docuconf {
             decoders = valueDecoders() + FileInputDecoder(files.loaded),
         )
         if (userBuilder != null) HopliteLoader.checkUserFiles(loader.user, vars, settings)
-        val secrets = vars.filter { it.spec.secret }.mapNotNull { env[it.spec.name]?.takeIf { s -> s.isNotEmpty() } }
+        // A secret list's items too, longest first, so an error that quotes one item never shows it.
+        val secrets = vars.filter { it.spec.secret }.flatMap { v ->
+            val raw = env[v.spec.name]?.takeIf { it.isNotEmpty() } ?: return@flatMap emptyList()
+            val items = if (v.spec.type == VarType.LIST) raw.split(v.spec.separator).map(String::trim).filter { it.length >= 4 } else emptyList()
+            listOf(raw) + items
+        }.distinct().sortedByDescending { it.length }
         val bound = try {
             HopliteLoader.bind(loader.loader, type, classLoader)
         } catch (e: Exception) {
@@ -279,6 +284,8 @@ public object Docuconf {
     /** `ALLOWED_ORIGINS=","` gives two empty items; an empty csv item is never what the platform meant. */
     private fun emptyItems(spec: VarSpec, raw: String?): List<Violation> {
         if (spec.type != VarType.LIST || spec.listEncoding != ListEncoding.CSV || raw.isNullOrEmpty()) return emptyList()
+        // itemMinLength already reports an empty item as out_of_range (SPEC §4.3): one problem, one line.
+        if ((spec.itemMinLength ?: 0) >= 1) return emptyList()
         val empty = raw.split(spec.separator).withIndex().filter { it.value.trim().isEmpty() }.map { it.index }
         if (empty.isEmpty()) return emptyList()
         return listOf(Violation(Codes.INVALID_TYPE, spec.name, "item${if (empty.size == 1) "" else "s"} ${empty.joinToString(", ")} ${if (empty.size == 1) "is" else "are"} empty; separate items with a single ${spec.separator}"))

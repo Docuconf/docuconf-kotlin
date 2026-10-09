@@ -370,6 +370,7 @@ data class Database(
 | `java.net.URI`, `java.net.URL`, `String` + `@Url`/`@Schemes` | `url` | as is |
 | `enum class`, `String` + `@OneOf` | `enum` | the constant's `@WireName`, else its name |
 | `List<String>`, `List<Int>`, `List<Long>`, `Set<…>` | `list`, `encoding: "csv"` | `a,b` |
+| `List<Secret>` | `list` of strings, `encoding: "csv"`, `secret: true`: a key set, such as the orders example's `WEBHOOK_KEYS`, rotated with two keys valid at once ([SPEC §6.1](https://github.com/Docuconf/docuconf-go/blob/main/spec/SPEC.md#61-rotation)) | `old,new` |
 | `Json<T>` | `json`, `schema` generated from `T` | compact JSON |
 | a data class | nested variables | |
 
