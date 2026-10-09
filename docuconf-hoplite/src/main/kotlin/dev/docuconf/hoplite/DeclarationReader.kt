@@ -94,6 +94,7 @@ internal object DeclarationReader {
     private val variableOnly = listOf(
         Min::class, Max::class, DecimalMin::class, DecimalMax::class, DurationMin::class, DurationMax::class,
         Url::class, Schemes::class, OneOf::class, Items::class, ItemMin::class, ItemMax::class, Examples::class,
+        Separator::class, Keys::class, KeyLength::class,
     )
 
     private class Reader(val root: KClass<*>, val prefix: String) {
@@ -221,7 +222,14 @@ internal object DeclarationReader {
                         p.annotations.any { it is Schemes || it is Url } -> "$name cannot be combined with @Schemes or @Url"
                         else -> null
                     }
-                    is Items -> if (type != VarType.LIST) "$name applies to List or Set, not $kind" else null
+                    is Items -> when (type) {
+                        VarType.LIST -> null
+                        VarType.KEY_SET -> "$name applies to List or Set; a KeySet's number of keys is @Keys(min, max)"
+                        else -> "$name applies to List or Set, not $kind"
+                    }
+                    is ItemLength -> if (type == VarType.KEY_SET) "$name applies to List<String>; a KeySet's key length is @KeyLength(min, max)" else null
+                    is Keys, is KeyLength -> if (type != VarType.KEY_SET) "$name applies to KeySet, not $kind" else null
+                    is Separator -> if (type != VarType.LIST && type != VarType.KEY_SET) "$name applies to List, Set or KeySet, not $kind" else null
                     is FileInput, is Format, is Tls, is MinCertificates, is KeystoreSpec ->
                         "$name applies to file inputs (ConfigFile, TlsKeyPair, CaBundle, Keystore, TextFile, BinaryFile), not $kind"
                     else -> null
@@ -265,7 +273,8 @@ internal object DeclarationReader {
             val (doc, details) = docs(owner, p, path)
             val itemClass = p.type.arguments.firstOrNull()?.type?.classifier
             // A List<Secret> is a secret list, such as a key set rotated with two keys valid at once (SPEC §6.1).
-            val secret = k == Secret::class || ((k == List::class || k == Set::class) && itemClass == Secret::class)
+            // A KeySet is always secret (SPEC §4.3).
+            val secret = k == Secret::class || k == KeySet::class || ((k == List::class || k == Set::class) && itemClass == Secret::class)
             val length = a.filterIsInstance<Length>().firstOrNull()
             val items = a.filterIsInstance<Items>().firstOrNull()
             val schemes = a.filterIsInstance<Schemes>().firstOrNull()?.value?.toList()
@@ -284,6 +293,7 @@ internal object DeclarationReader {
                 k == java.time.Duration::class || k == kotlin.time.Duration::class -> VarType.DURATION
                 k.java.isEnum -> VarType.ENUM
                 k == List::class || k == Set::class -> VarType.LIST
+                k == KeySet::class -> VarType.KEY_SET
                 k == Json::class -> VarType.JSON
                 else -> error("unreachable")
             }
@@ -334,7 +344,7 @@ internal object DeclarationReader {
                 errors += "${where(path)}: @ItemMin and @ItemMax only apply to List<Int> or List<Long>"
             }
             val itemLength = a.filterIsInstance<ItemLength>().firstOrNull()
-            if (itemLength != null && listItems != ListItems.STRING) {
+            if (itemLength != null && listItems != ListItems.STRING && type != VarType.KEY_SET) {
                 errors += "${where(path)}: @ItemLength only applies to List<String>"
             }
             val stringItems = itemLength?.takeIf { listItems == ListItems.STRING }
@@ -359,6 +369,10 @@ internal object DeclarationReader {
             val deprecated = a.filterIsInstance<DeprecatedInput>().firstOrNull()?.let { Deprecation(it.message, it.replacedBy.ifEmpty { null }) }
             // Where Hoplite reads the value in a config file, such as a platform overlay (SPEC §4.7).
             val configKey = path.joinToString(KEY_SEPARATOR)
+            val keys = a.filterIsInstance<Keys>().firstOrNull()
+            val keyLength = a.filterIsInstance<KeyLength>().firstOrNull()
+            val separator = a.filterIsInstance<Separator>().firstOrNull()?.value
+            if (separator != null && separator.isEmpty()) errors += "${where(path)}: @Separator cannot be empty"
             if (type == VarType.ENUM && values == null) type = VarType.STRING
             vars += VarBinding(
                 VarSpec(
@@ -377,8 +391,8 @@ internal object DeclarationReader {
                     max = max,
                     minDuration = durationBound(a.filterIsInstance<DurationMin>().firstOrNull()?.value, "DurationMin", path),
                     maxDuration = durationBound(a.filterIsInstance<DurationMax>().firstOrNull()?.value, "DurationMax", path),
-                    // The platform renders ISO 8601 (PT1M30S). docuconf's duration decoders also take
-                    // Go syntax (1m30s), for people typing values locally.
+                    // The platform renders ISO 8601 (PT1M30S), what java.time.Duration and Hoplite read;
+                    // docuconf accepts exactly that grammar at boot (SPEC §5).
                     durationEncoding = DurationEncoding.ISO8601,
                     minLength = length?.min?.takeIf { it >= 0 },
                     maxLength = length?.max?.takeIf { it >= 0 },
@@ -386,14 +400,20 @@ internal object DeclarationReader {
                     schemes = schemes,
                     values = values,
                     items = listItems,
-                    // Hoplite splits a string on "," for lists (and trims each item).
+                    // docuconf splits the value itself, on every separator and without trimming
+                    // (SPEC §5), and hands Hoplite the items.
                     listEncoding = ListEncoding.CSV,
-                    minItems = items?.min?.takeIf { it >= 0 },
-                    maxItems = items?.max?.takeIf { it >= 0 },
+                    separator = separator ?: ",",
+                    minItems = items?.min?.takeIf { it >= 0 && type == VarType.LIST },
+                    maxItems = items?.max?.takeIf { it >= 0 && type == VarType.LIST },
                     itemMin = if (intItems) maxOf(itemMin ?: Long.MIN_VALUE, Int.MIN_VALUE.toLong()) else itemMin,
                     itemMax = if (intItems) minOf(itemMax ?: Long.MAX_VALUE, Int.MAX_VALUE.toLong()) else itemMax,
                     itemMinLength = stringItems?.min?.takeIf { it >= 0 },
                     itemMaxLength = stringItems?.max?.takeIf { it >= 0 },
+                    minKeys = keys?.min?.takeIf { type == VarType.KEY_SET },
+                    maxKeys = keys?.max?.takeIf { type == VarType.KEY_SET },
+                    keyMinLength = keyLength?.min?.takeIf { it >= 0 && type == VarType.KEY_SET },
+                    keyMaxLength = keyLength?.max?.takeIf { it >= 0 && type == VarType.KEY_SET },
                     schema = schema,
                 ),
                 path,
@@ -517,7 +537,7 @@ internal object DeclarationReader {
             k == Int::class || k == Long::class || k == Short::class || k == Byte::class ||
             k == Double::class || k == Float::class || k == Boolean::class ||
             k == java.time.Duration::class || k == kotlin.time.Duration::class ||
-            k.java.isEnum || k == Json::class ||
+            k.java.isEnum || k == Json::class || k == KeySet::class ||
             ((k == List::class || k == Set::class) && t.arguments.firstOrNull()?.type?.classifier.let { it == String::class || it == Secret::class || it == Int::class || it == Long::class })
 
     private val placeholderKey = object : PrivateKey {
@@ -550,6 +570,7 @@ internal object DeclarationReader {
             k == Set::class -> emptySet<Any>()
             k == Map::class -> emptyMap<Any, Any>()
             k == Json::class -> Json(placeholder(t.arguments.first().type!!) ?: "")
+            k == KeySet::class -> KeySet(emptyList())
             k == ConfigFile::class -> ConfigFile(nowhere, placeholder(t.arguments.first().type!!) ?: "")
             k == TlsKeyPair::class -> TlsKeyPair(nowhere, emptyList(), placeholderKey, emptyList())
             k == CaBundle::class -> CaBundle(nowhere, emptyList())

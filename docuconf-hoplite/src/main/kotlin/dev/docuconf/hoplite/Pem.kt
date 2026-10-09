@@ -22,6 +22,9 @@ internal object Pem {
         Block(m.groupValues[1], Base64.getMimeDecoder().decode(m.groupValues[2].trim()))
     }.toList()
 
+    /** The types of the PEM blocks in [text] (`CERTIFICATE`, `PRIVATE KEY`, ...), without decoding them. */
+    fun blockTypes(text: String): List<String> = blockRegex.findAll(text).map { it.groupValues[1] }.toList()
+
     /** Every certificate in a PEM file. Throws on a malformed certificate. */
     fun certificates(text: String): List<X509Certificate> {
         val cf = CertificateFactory.getInstance("X.509")

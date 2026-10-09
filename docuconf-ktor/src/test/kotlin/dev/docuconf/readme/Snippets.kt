@@ -4,9 +4,14 @@ import com.sksamuel.hoplite.ConfigLoaderBuilder
 import com.sksamuel.hoplite.Secret
 import com.sksamuel.hoplite.addResourceSource
 import dev.docuconf.hoplite.ConfigOverlay
+import dev.docuconf.hoplite.Docuconf
+import dev.docuconf.hoplite.checkContract
 import dev.docuconf.hoplite.Doc
 import dev.docuconf.hoplite.DocuconfService
 import dev.docuconf.hoplite.Env
+import dev.docuconf.hoplite.KeyLength
+import dev.docuconf.hoplite.KeySet
+import dev.docuconf.hoplite.Keys
 import dev.docuconf.hoplite.Max
 import dev.docuconf.hoplite.Min
 import dev.docuconf.hoplite.Schemes
@@ -20,7 +25,10 @@ import io.ktor.server.response.respondText
 import io.ktor.server.routing.get
 import io.ktor.server.routing.routing
 import java.io.File
+import java.security.MessageDigest
 import java.time.Duration
+import javax.crypto.Mac
+import javax.crypto.spec.SecretKeySpec
 
 // Code shown in README.md. ReadmeTest checks every README code block appears verbatim in a file
 // that CI compiles, runs or diffs; these snippets are compiled here and run by ReadmeTest.
@@ -64,6 +72,28 @@ data class GatewayConfig(
     @Doc("Upstream request timeout") val timeout: Duration = Duration.ofSeconds(30),
     val db: Database,
 )
+
+data class WebhookConfig(
+    @Doc("Keys that verify webhook signatures") @KeyLength(min = 32, max = 256) val webhookKeys: KeySet,
+    @Doc("API keys callers present") @Keys(min = 1, max = 3) val apiKeys: KeySet? = null,
+)
+
+fun verified(config: WebhookConfig, body: ByteArray, signature: ByteArray): Boolean =
+    config.webhookKeys.verify { key ->
+        val mac = Mac.getInstance("HmacSHA256").apply { init(SecretKeySpec(key, "HmacSHA256")) }
+        MessageDigest.isEqual(mac.doFinal(body), signature)
+    }
+
+fun allowed(config: WebhookConfig, presented: String): Boolean = config.apiKeys?.contains(presented) ?: false
+
+fun contractFirstWithFiles(): Any? {
+    val contract = ContractFirst.parse(File("contract.json").readText())
+    when (val r = Docuconf.checkContract(contract, System.getenv())) {
+        is ContractFirst.Result.Success -> r.values.file("routes")   // the config file's data
+        is ContractFirst.Result.Failure -> error(r.violations.joinToString("\n"))
+    }
+    return null
+}
 
 fun contractFirst() {
     val contract = ContractFirst.parse(File("contract.json").readText())

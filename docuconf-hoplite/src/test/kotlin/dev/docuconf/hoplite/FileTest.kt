@@ -97,8 +97,9 @@ class TlsTest {
         // A key of another algorithm altogether.
         w.tls(leaf, Certs.pkcs8(Certs.rsa()))
         assertEquals(listOf(Codes.KEY_MISMATCH), w.codes())
+        // No PEM key at all is file_malformed (SPEC §11.2 item 5).
         w.tls(leaf, "not a key\n")
-        assertEquals(listOf(Codes.KEY_MISMATCH), w.codes())
+        assertEquals(listOf(Codes.FILE_MALFORMED), w.codes())
     }
 
     @Test
@@ -113,7 +114,11 @@ class TlsTest {
     @Test
     fun malformedCertificateAndMissingKey(@TempDir root: Path) {
         val w = World(root)
+        // No PEM certificate at all is file_malformed; a PEM block that does not parse is
+        // certificate_invalid (SPEC §11.2 item 5).
         Files.writeString(w.path("/etc/gateway/tls/tls.crt"), "garbage")
+        assertEquals(listOf(Codes.FILE_MALFORMED), w.codes())
+        Files.writeString(w.path("/etc/gateway/tls/tls.crt"), "-----BEGIN CERTIFICATE-----\nAAAA\n-----END CERTIFICATE-----\n")
         assertEquals(listOf(Codes.CERTIFICATE_INVALID), w.codes())
         Files.delete(w.path("/etc/gateway/tls/tls.key"))
         assertEquals(listOf(Codes.FILE_MISSING), w.codes())
@@ -240,8 +245,9 @@ class OtherFilesTest {
 
         w.write("/etc/gateway/ca/bundle.pem", "no certificates here\n")
         assertEquals(listOf(Codes.FILE_MALFORMED), w.codes())
+        // A PEM certificate that does not parse is certificate_invalid (SPEC §11.2 item 5).
         w.write("/etc/gateway/ca/bundle.pem", "-----BEGIN CERTIFICATE-----\nAAAA\n-----END CERTIFICATE-----\n")
-        assertEquals(listOf(Codes.FILE_MALFORMED), w.codes())
+        assertEquals(listOf(Codes.CERTIFICATE_INVALID), w.codes())
 
         // SSL_CERT_FILE points somewhere else, under the same file root.
         w.write("/opt/certs/other.pem", Certs.pem(ca1.cert))

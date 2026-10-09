@@ -18,14 +18,14 @@ the environment at boot, reporting every problem at once. The server is the JDK'
 | `LOG_LEVEL` | enum | `debug`, `info`, `warn`, `error`; default `info` |
 | `DATABASE_URL` | url | secret, required, scheme `postgres`, at most 2048 characters |
 | `ALLOWED_ORIGINS` | list of strings (csv) | at least 1 item; default `http://localhost:3000` |
-| `REQUEST_TIMEOUT` | duration (ISO 8601 like `PT30S`, or Go syntax like `1m30s`) | 1s–5m, default `30s` |
+| `REQUEST_TIMEOUT` | duration (ISO 8601, like `PT30S`) | 1s–5m, default `30s` |
 | `WORKER_COUNT` | int | 1–64, default `4` |
-| `WEBHOOK_KEYS` | list of strings (csv), `List<Secret>` | secret, optional; 1–2 keys of 32–256 characters each |
+| `WEBHOOK_KEYS` | key set (csv), `KeySet` | secret, optional; 1–2 keys of 32–256 characters each |
 
 Each property reads its name in SCREAMING_SNAKE_CASE (`logLevel` reads `LOG_LEVEL`), so the class
 is one flat data class. `LogLevel` has idiomatic constants (`DEBUG`) with lowercase wire values
-(`@WireName("debug")`). Durations are ISO 8601 on the wire (`PT1M30S`, what the platform renders);
-typed by hand, `1m30s` works too.
+(`@WireName("debug")`). Durations are ISO 8601 on the wire (`PT1M30S`, what the platform renders),
+and docuconf accepts exactly that grammar (SPEC §5): `1m30s` fails with `invalid_type`.
 
 ## Run it
 
@@ -55,8 +55,9 @@ On Kubernetes the same text goes to `/dev/termination-log`, so `kubectl describe
 
 ## Rotate a key
 
-`WEBHOOK_KEYS` is a key set: `POST /webhooks/payments` accepts a body whose `X-Signature` header
-is the hex HMAC-SHA256 of the body under any key in the list
+`WEBHOOK_KEYS` is a key set (`KeySet`, contract type `keySet`): `POST /webhooks/payments` accepts
+a body whose `X-Signature` header is the hex HMAC-SHA256 of the body under any key in the set,
+checked with `KeySet.verify`, which tries every key
 ([`Webhooks.kt`](src/main/kotlin/dev/docuconf/examples/orders/Webhooks.kt)). It is one
 comma-separated variable, so one Kubernetes Secret key holds it:
 
@@ -72,14 +73,15 @@ with two keys valid at once, no webhook is turned away while that happens:
 2. Switch the sender to the new key.
 3. Remove the old key (`new`), and roll out.
 
-The contract allows 1 or 2 keys of 32 to 256 characters each, so a trailing comma or a truncated
-key stops the service at boot instead of locking out the sender:
+The contract allows 1 or 2 keys (a key set's default) of 32 to 256 characters each, so a trailing
+comma or a truncated key stops the service at boot instead of locking out the sender, and the
+message never shows a key:
 
 ```console
 $ DATABASE_URL=postgres://orders:pw@localhost:5432/orders \
     WEBHOOK_KEYS=old-webhook-key-0123456789abcdef0123, examples/orders/build/install/orders/bin/orders
 docuconf: 1 configuration problem:
-  WEBHOOK_KEYS: out_of_range: item 1 is 0 characters, below itemMinLength 32
+  WEBHOOK_KEYS: out_of_range: key 1 is empty
 ```
 
 [`WebhooksTest`](src/test/kotlin/dev/docuconf/examples/orders/WebhooksTest.kt) walks through a
@@ -117,7 +119,7 @@ docuconf docs contract.cue --format model -o docs.json
 CI runs the same commands with `--check` and fails when a file is out of date; it checks
 [`../consumer`](../consumer)'s generated docs the same way. `WORKER_COUNT` shows where the text
 comes from: the first sentence of its KDoc is the description, and the rest its details.
-`WEBHOOK_KEYS`'s details carry its rotation steps as a numbered list.
+`WEBHOOK_KEYS` is a `keySet`, so the generated docs print its rotation steps themselves.
 
 ## Deploy
 

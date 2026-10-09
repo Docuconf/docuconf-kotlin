@@ -5,8 +5,9 @@ import dev.docuconf.hoplite.Doc
 import dev.docuconf.hoplite.DocuconfService
 import dev.docuconf.hoplite.DurationMax
 import dev.docuconf.hoplite.DurationMin
-import dev.docuconf.hoplite.ItemLength
 import dev.docuconf.hoplite.Items
+import dev.docuconf.hoplite.KeyLength
+import dev.docuconf.hoplite.KeySet
 import dev.docuconf.hoplite.Length
 import dev.docuconf.hoplite.Max
 import dev.docuconf.hoplite.Min
@@ -37,22 +38,18 @@ data class OrdersConfig(
      * - Lower it when the database is the bottleneck.
      */
     @Min(1) @Max(64) val workerCount: Int = 4,
-    // A List<Secret> is a secret list, one comma-separated variable: one Kubernetes Secret key holds
-    // "old,new" while a key is rotated (SPEC §6.1). No default, as for every secret.
+    // A KeySet is a key set (contract type keySet, always secret): one comma-separated variable, so
+    // one Kubernetes Secret key holds "old,new" while a key is rotated (SPEC §6.1). It holds 1 or 2
+    // keys by default (@Keys changes that). No default, as for every secret.
     /**
      * Keys that verify the signature on incoming payment webhooks
      *
-     * A webhook is accepted when it is signed with any key in the list, so the key can be rotated
-     * without turning webhooks away. To rotate:
-     *
-     * 1. add the new key as the second item, and roll out;
-     * 2. switch the sender to the new key;
-     * 3. remove the old key, and roll out.
-     *
-     * Each key is 32 to 256 characters, so an empty or truncated key fails at boot. Without this
-     * variable, the service rejects every webhook.
+     * A webhook is accepted when it is signed with any key in the set, so the key can be rotated
+     * without turning webhooks away; the generated docs list the rotation steps. Each key is 32 to
+     * 256 characters, so an empty or truncated key fails at boot. Without this variable, the service
+     * rejects every webhook.
      */
-    @Items(min = 1, max = 2) @ItemLength(min = 32, max = 256) val webhookKeys: List<Secret>? = null,
+    @KeyLength(min = 32, max = 256) val webhookKeys: KeySet? = null,
 )
 
 /** Lowercase on the wire (`LOG_LEVEL=debug`), idiomatic constants in Kotlin. */

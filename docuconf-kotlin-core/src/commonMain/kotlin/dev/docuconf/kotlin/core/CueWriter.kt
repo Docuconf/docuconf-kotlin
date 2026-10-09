@@ -42,6 +42,21 @@ public object CueWriter {
             for (o in contract.overlays.sortedBy { it.name }) writeOverlay(w, o)
             w.close()
         }
+        contract.profiles?.let { p ->
+            w.open("profiles: {")
+            w.field("selector", str(p.selector))
+            w.field("default", str(p.default))
+            if (p.defaults.isNotEmpty()) {
+                w.open("defaults: {")
+                for ((profile, values) in p.defaults.entries.sortedBy { it.key }) {
+                    w.open("${label(profile)}: {")
+                    for ((name, x) in values.entries.sortedBy { it.key }) w.field(label(name), value(x, w.depth))
+                    w.close()
+                }
+                w.close()
+            }
+            w.close()
+        }
         w.close()
         return w.toString()
     }
@@ -68,6 +83,14 @@ public object CueWriter {
             w.field("items", str(v.items!!.wire))
             w.field("encoding", str(v.listEncoding.wire))
             if (v.listEncoding == ListEncoding.CSV && v.separator != ",") w.field("separator", str(v.separator))
+        }
+        if (v.type == VarType.KEY_SET) {
+            w.field("encoding", str(v.listEncoding.wire))
+            if (v.listEncoding == ListEncoding.CSV && v.separator != ",") w.field("separator", str(v.separator))
+            w.field("minKeys", (v.minKeys ?: ValueChecks.DEFAULT_MIN_KEYS).toString())
+            w.field("maxKeys", (v.maxKeys ?: ValueChecks.DEFAULT_MAX_KEYS).toString())
+            v.keyMinLength?.let { w.field("keyMinLength", it.toString()) }
+            v.keyMaxLength?.let { w.field("keyMaxLength", it.toString()) }
         }
         v.values?.let { w.field("values", list(it.map(::str))) }
         v.schemes?.let { w.field("schemes", list(it.map(::str))) }

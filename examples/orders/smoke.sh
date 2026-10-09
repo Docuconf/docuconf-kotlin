@@ -57,8 +57,8 @@ grep -qx 'docuconf: 2 configuration problems:' "$log" || fail "no report header 
 if grep -q -e Exception -e '^\s*at ' "$log"; then fail "the output has a stack trace"; fi
 [ "$status" -eq 1 ] || fail "the app exited $status, not 1"
 
-echo "== lowercase LOG_LEVEL and Go-style REQUEST_TIMEOUT"
-env -i PATH="$PATH" JAVA_HOME="${JAVA_HOME:-}" PORT="$port" DATABASE_URL="$secret" LOG_LEVEL=debug REQUEST_TIMEOUT=1m30s "$app" >"$log" 2>&1 &
+echo "== lowercase LOG_LEVEL and an ISO 8601 REQUEST_TIMEOUT"
+env -i PATH="$PATH" JAVA_HOME="${JAVA_HOME:-}" PORT="$port" DATABASE_URL="$secret" LOG_LEVEL=debug REQUEST_TIMEOUT=PT1M30S "$app" >"$log" 2>&1 &
 pid=$!
 wait_for_healthz
 config="$(curl -fsS "http://127.0.0.1:$port/config")" || fail "GET /config failed"
@@ -74,7 +74,7 @@ set -e
 cat "$log"
 [ "$status" -eq 1 ] || fail "the app exited $status, not 1"
 grep -qx 'docuconf: 1 configuration problem:' "$log" || fail "not exactly one problem"
-grep -qx '  WEBHOOK_KEYS: out_of_range: item 1 is 0 characters, below itemMinLength 32' "$log" || fail "no out_of_range for WEBHOOK_KEYS"
+grep -qx '  WEBHOOK_KEYS: out_of_range: key 1 is empty' "$log" || fail "no out_of_range for WEBHOOK_KEYS"
 if grep -q webhook-key "$log"; then fail "the output shows a key"; fi
 
 echo "== mid-rotation: either key is accepted, any other rejected"

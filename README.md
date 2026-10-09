@@ -144,14 +144,14 @@ class AppConfigTest {
     @Test
     fun reportsEveryProblem() {
         val e = assertFailsWith<ConfigViolationException> {
-            Docuconf.load<AppConfig> { env = mapOf("PORT" to "0", "REQUEST_TIMEOUT" to "5m") }
+            Docuconf.load<AppConfig> { env = mapOf("PORT" to "0", "REQUEST_TIMEOUT" to "PT5M") }
         }
         assertEquals(
             """
             docuconf: 3 configuration problems:
               PORT: out_of_range: "0" is below min 1
               DATABASE_URL: missing_required: required, but not set
-              REQUEST_TIMEOUT: out_of_range: "5m" is longer than max 1m
+              REQUEST_TIMEOUT: out_of_range: "PT5M" is longer than max 1m
             """.trimIndent(),
             e.message,
         )
@@ -367,21 +367,64 @@ data class Database(
 | `Double`, `Float` | `float` | `0.5` |
 | `Boolean` | `bool` | `true` / `false` |
 | `java.time.Duration`, `kotlin.time.Duration` | `duration`, `encoding: "iso8601"` | `PT1M30S` |
+| `KeySet` | `keySet` (always secret), `encoding: "csv"`: keys that are all valid at once, such as the orders example's `WEBHOOK_KEYS` ([below](#key-sets)) | `old,new` |
 | `java.net.URI`, `java.net.URL`, `String` + `@Url`/`@Schemes` | `url` | as is |
 | `enum class`, `String` + `@OneOf` | `enum` | the constant's `@WireName`, else its name |
 | `List<String>`, `List<Int>`, `List<Long>`, `Set<…>` | `list`, `encoding: "csv"` | `a,b` |
-| `List<Secret>` | `list` of strings, `encoding: "csv"`, `secret: true`: a key set, such as the orders example's `WEBHOOK_KEYS`, rotated with two keys valid at once ([SPEC §6.1](https://github.com/Docuconf/docuconf-go/blob/main/spec/SPEC.md#61-rotation)) | `old,new` |
+| `List<Secret>` | `list` of strings, `encoding: "csv"`, `secret: true` (for a set of keys, use `KeySet`) | `a,b` |
 | `Json<T>` | `json`, `schema` generated from `T` | compact JSON |
 | a data class | nested variables | |
 
-- **Durations.** The platform renders ISO 8601 (`PT1M30S`). At boot docuconf also accepts Go syntax
-  (`1m30s`) and Hoplite's `30s` / `5 minutes`, for values typed by hand. Annotation bounds
-  (`@DurationMax("5m")` or `"PT5M"`) and defaults are exported in Go syntax, as the spec requires. A
-  value in neither form is `invalid_type: ... expected an ISO 8601 duration like PT30S, or Go syntax like 30s or 1m30s`.
+**Parsing is exact** ([SPEC §5](https://github.com/Docuconf/docuconf-go/blob/main/spec/SPEC.md#5-wire-encoding-and-parsing)):
+docuconf checks and parses every value itself, before Hoplite sees it, and hands Hoplite the parsed
+value, so Hoplite's more lenient parsing never applies and every docuconf SDK accepts the same
+strings. A form outside these rules is `invalid_type`:
+
+- **Values are never trimmed.** `" true"`, `"8080\n"` and `"PT5S "` fail; digits are ASCII only.
+- **Booleans** are `true` or `false` in any case (`TRUE`, `False`), and nothing else: never `yes`,
+  `no`, `on`, `t`, `1` or `0`.
+- **Integers** are `^[+-]?[0-9]+$` in base 10: `+5` and `007` (7) are fine; `0x10`, `1_000`, `1e3`
+  and `5.0` are not. A value beyond 64 bits, or beyond an `Int`'s range, is `out_of_range`.
+- **Floats** are decimal with a digit on each side of the point and an optional exponent (`1.5`,
+  `25e-2`); never `.5`, `5.`, `inf`, `NaN`, a hex float, `1e400` or `0,5`.
+- **Durations** are ISO 8601 (`P[nD][T[nH][nM][nS]]`, upper case, a fraction after `.` or `,`, such as
+  `PT1M30S`, `PT1,5S` or `P1DT2H`): what the platform renders and `java.time.Duration` reads. Go
+  syntax (`1m30s`) and Hoplite's `30s` are `invalid_type: ... expected an ISO 8601 duration like PT30S`.
+  Annotation bounds (`@DurationMax("5m")` or `"PT5M"`) and defaults are exported in Go syntax, as the
+  spec requires.
+- **Lists and key sets** are split on every separator (`,`, or `@Separator(";")`) and never trimmed:
+  `a, b` is `a` and ` b`, and `a,,b` has an empty middle item (bound items with
+  `@ItemLength(min = 1)` to reject it).
 - **Enums.** `enum class LogLevel { @WireName("debug") DEBUG }` exports and reads `debug`. Matching is
   exact: the contract and the boot check agree.
-- **Lists:** Hoplite splits on `,` and trims each item. An empty item (`a,,b`, `,`) is `invalid_type`.
-- **Booleans:** the platform sends `true`/`false`; Hoplite also accepts `yes`, `no`, `t`, `f`, `1`, `0`.
+
+### Key sets
+
+A `KeySet` is a set of secret keys that are all valid at once, so a key that verifies something
+(webhook signatures, inbound API keys, JWT HMACs) can be rotated without an outage: during the
+overlap the platform supplies `old,new` from one Kubernetes Secret key. It is always secret, holds 1
+or 2 keys unless `@Keys(min, max)` says otherwise, and `@KeyLength` bounds each key:
+
+```kotlin
+data class WebhookConfig(
+    @Doc("Keys that verify webhook signatures") @KeyLength(min = 32, max = 256) val webhookKeys: KeySet,
+    @Doc("API keys callers present") @Keys(min = 1, max = 3) val apiKeys: KeySet? = null,
+)
+
+fun verified(config: WebhookConfig, body: ByteArray, signature: ByteArray): Boolean =
+    config.webhookKeys.verify { key ->
+        val mac = Mac.getInstance("HmacSHA256").apply { init(SecretKeySpec(key, "HmacSHA256")) }
+        MessageDigest.isEqual(mac.doFinal(body), signature)
+    }
+
+fun allowed(config: WebhookConfig, presented: String): Boolean = config.apiKeys?.contains(presented) ?: false
+```
+
+`keys` lists the keys in the order the platform gave them. `verify` tries every key, even after one
+matches, and `contains` compares in constant time, so the time taken never says which key matched.
+`toString()` is `KeySet(****)`, and no error message holds a key: too few or too many keys is
+`too_few_items` or `too_many_items`, and a key outside `@KeyLength`, or an empty one (a stray
+comma), is `out_of_range`. `docuconf docs` prints the rotation steps for every key set.
 
 ### Annotations
 
@@ -403,7 +446,10 @@ on a `String`, `@Schemes` on an `Int`, a constraint on a nested class parameter)
 | `@WireName("debug")` | An enum constant's value on the wire. |
 | `@Items(min, max)`, `@ItemMin(n)`, `@ItemMax(n)` | List length; bounds on every item of a `List<Int>`/`List<Long>`. |
 | `@ItemLength(min, max)` | Length in characters of every item of a `List<String>` (`itemMinLength`/`itemMaxLength`), checked after splitting, so the separator is never counted. On a `List<Int>` it is a declaration error. |
-| `@Group`, `@Examples`, `@DeprecatedInput(message, replacedBy)` | Docs metadata. Deprecated inputs log a warning at boot when set. |
+| `@Keys(min, max)`, `@KeyLength(min, max)` | A `KeySet`'s number of keys (default 1 to 2) and each key's length in characters. |
+| `@Separator(";")` | The separator of a list or key set (default `,`). |
+| `@Group`, `@Examples` | Docs metadata. |
+| `@DeprecatedInput(message, replacedBy)` | Deprecated (SPEC §4.2): the platform should stop setting it. `message` is not blank and at most 500 characters, and a required input cannot be deprecated; both fail when the class is declared. When it is still set, boot logs `OLD_PORT is deprecated: Use PORT instead (replaced by PORT)`, never the value; it still loads and is checked. |
 | `@NotInContract` | Leave a parameter out, e.g. a value Hoplite reads from Vault (SPEC §4.4). |
 | `@FileInput(name, path, pathEnv, maxSize, secret)` | Declares a file input on a file-typed parameter. |
 | `@Format`, `@Tls`, `@MinCertificates`, `@KeystoreSpec` | File input details: config format, TLS constraints, CA bundle size, keystore format and password variable. |
@@ -458,9 +504,9 @@ CONFIG.agents.md from the exported contract: `docuconf docs contract.cue -o CONF
 | Parameter type | Contract type | Checked at boot |
 |---|---|---|
 | `ConfigFile<T>` | `config` (`json`, `yaml`, `toml`), `schema` generated from `T` | parses with Hoplite's parser for the format (`file_malformed`), matches the schema (`schema_mismatch`), binds to `T` with Hoplite. |
-| `TlsKeyPair` | `tls` (directory with `tls.crt`, `tls.key`, `ca.crt`) | certificate and key parse (PKCS#8, PKCS#1 and SEC 1 keys, as cert-manager writes them) and match, validity and `minRemaining`, every `dnsNames` entry covered by a SAN (wildcards cover one label), key algorithm, PKIX chain to `ca.crt` with `requireCA`. |
-| `CaBundle` | `caBundle` | at least `minCertificates` parseable PEM certificates. |
-| `Keystore` | `keystore` (`pkcs12`, `jks`) | opens with the password variable (`keystore_unreadable`). |
+| `TlsKeyPair` | `tls` (directory with `tls.crt`, `tls.key`, `ca.crt`) | certificate and key parse (PKCS#8, PKCS#1 and SEC 1 keys, as cert-manager writes them) and match, validity and `minRemaining`, every `dnsNames` entry covered by a SAN (wildcards cover one label), key algorithm, PKIX chain to `ca.crt` with `requireCA`. A `tls.crt` or `tls.key` with no PEM certificate or key at all is `file_malformed`; one that does not parse is `certificate_invalid`. |
+| `CaBundle` | `caBundle` | at least `minCertificates` parseable PEM certificates (`file_malformed` for too few, `certificate_invalid` for one that does not parse). |
+| `Keystore` | `keystore` (`pkcs12`, `jks`) | opens with the password variable, and its integrity MAC checks out (`keystore_unreadable`); an unset password variable is an empty password. |
 | `TextFile` | `text` | UTF-8, length, RE2 pattern. Never trimmed. |
 | `BinaryFile` | `binary` | size only; not read into memory. |
 
@@ -522,8 +568,9 @@ Bank-Vaults' `vault-env` or `op run` have run. If one did not run, a secret stil
 `@DocuconfService(baseSources = ["/application.yaml"])` (Hoplite resource-or-file paths) adds config
 files that ship in the image. Hoplite reads them **below** environment variables and overlays. On
 export their values become each variable's `default`, and a required variable with a value there is
-exported as optional. A secret with a value in a base file is a declaration error. Profiles (SPEC
-§4.4) are not supported in v0.1.
+exported as optional. A secret with a value in a base file is a declaration error. A declared class
+does not read profile files (SPEC §4.4) yet; the contract-first mode applies a contract's `profiles`
+([docs/ADVANCED.md](docs/ADVANCED.md)).
 
 ### Config-file overlays
 
@@ -554,7 +601,18 @@ data class GatewayConfig(
 ## More
 
 [docs/ADVANCED.md](docs/ADVANCED.md): the contract-first mode (validate against a hand-written
-contract), the shared conformance suite, the plan for Android and iOS, and what v0.1 does not do.
+contract, with its files, profiles and overlays), the shared conformance suite, the plan for Android
+and iOS, and what v0.1 does not do.
+
+### Conformance
+
+CI runs docuconf-go's shared conformance suite (SPEC §12) through the contract-first mode, and the
+SDK supports every capability tag in it: `int64`, `json-schema`, `key-set`, `deprecated`,
+`strict-parsing`, `files`, `profiles` and `overlays`. **No case is skipped**, and the run fails if one
+ever is; a tag the runner does not know is skipped rather than run, so that failure is how a new tag
+gets noticed. CI also exports the shared export fixture and compares it with docuconf-go's golden
+contract; the one difference is `reload: watch` on two file inputs, which this SDK rejects because it
+reads files once, at boot ([docs/ADVANCED.md](docs/ADVANCED.md#conformance)).
 
 ## Development
 

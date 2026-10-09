@@ -14,30 +14,72 @@ val timeout: kotlin.time.Duration? = values.duration("TIMEOUT")
 ```
 
 - `ContractFirst.check(contract, env)` returns `Result.Success` or `Result.Failure` with every
-  violation, with the same codes and secret redaction as boot validation.
-- It parses every SPEC §5 encoding: lists as `csv` (with `separator`), `json` or `indexed`
-  (`NAME__0`, `NAME__1`, ..., numbered from 0 with no gap; a gap is `invalid_type`), durations as `go`, `iso8601`, `seconds` or `timespan`
-  (`[d.]hh:mm:ss[.fffffff]`). Values are never trimmed, and booleans are `true` or `false` in any case.
+  violation, with the same codes and secret redaction as boot validation, and the warnings
+  (deprecated inputs that are set, an input set both in the environment and an overlay).
+- It parses every SPEC §5 encoding, exactly: lists and key sets as `csv` (with `separator`), `json`
+  or `indexed` (`NAME__0`, `NAME__1`, ..., numbered from 0 with no gap; a gap is `invalid_type`),
+  durations as `go` (Go's `time.ParseDuration` grammar, signs and fractions included), `iso8601`,
+  `seconds` or `timespan` (`[d.]hh:mm:ss[.fffffff]`). Values are never trimmed, and booleans are
+  `true` or `false` in any case.
 - Values are checked by `ValueChecks`, the code that checks a declared Hoplite class at boot, so the
   conformance suite tests the real checks. The contract itself goes through `DeclarationChecks`.
+- Values are layered as SPEC §4.4 and §4.7 say: the variable's `default`, then the selected profile's
+  default from `profiles.defaults` (the selector's value, else `profiles.default`), then a
+  config-file overlay, then the environment.
 - Typed accessors: `string`, `long`, `double`, `boolean`, `duration`, `stringList`, `longList`,
-  `json`, or `values[name]`. Absent optional variables are null; defaults come from the contract.
-  `toJson()` gives every value as JSON, with durations in canonical Go form.
-- It covers variables. File inputs and overlays in the contract are not read or checked.
+  `keySet`, `json`, `file`, or `values[name]`. Absent optional inputs are null. `toJson()` gives every
+  value as JSON, as the conformance suite writes it.
+
+File inputs and overlays are files, which the multiplatform core does not read. In
+`docuconf-hoplite`, `Docuconf.checkContract` and `Docuconf.loadContract` read them too, with every
+path under `DOCUCONF_FILE_ROOT`, and check every file input with the code that checks a declared
+class's files at boot: config files in JSON, YAML and TOML (parsed by Hoplite's parser modules, which
+must be on the classpath, and checked against their `schema`), TLS key pairs, CA bundles, PKCS#12
+and JKS keystores, text and binary files:
+
+```kotlin
+val contract = ContractFirst.parse(File("contract.json").readText())
+when (val r = Docuconf.checkContract(contract, System.getenv())) {
+    is ContractFirst.Result.Success -> r.values.file("routes")   // the config file's data
+    is ContractFirst.Result.Failure -> error(r.violations.joinToString("\n"))
+}
+```
+
+A config file's value is its data as a `JsonValue` (YAML scalars get the type the file's schema asks
+for, since Hoplite's YAML parser keeps them as strings), a text file's its text, and a TLS key pair,
+CA bundle, keystore or binary file is the same `TlsKeyPair`, `CaBundle`, `Keystore` or `BinaryFile`
+a declared class gets. Overlays are read as native values (JSON by docuconf's own strict reader, YAML
+and TOML by Hoplite's), matched at each variable's `configKey` split on `keySeparator`, exactly.
 
 ## Conformance
 
-`ConformanceTest` (in `docuconf-kotlin-core`'s JVM tests) runs docuconf-go's shared suite,
-`conformance/cases.json` (SPEC §12), through the contract-first mode. Each case is its own JUnit test
-named by its `id`, so a failure points at its YAML source.
+`ConformanceTest` (in `docuconf-hoplite`'s tests) runs docuconf-go's shared suite,
+`conformance/cases.json` (SPEC §12), through `Docuconf.checkContract`. For each case it makes a fresh
+directory, writes the case's files under it, and loads with the case's `env` plus
+`DOCUCONF_FILE_ROOT` as the whole environment. Each case is its own JUnit test named by its `id`, so a
+failure points at its YAML source.
 
-Run it with `DOCUCONF_CONFORMANCE=../docuconf-go/conformance/cases.json DOCUCONF_REQUIRE_CONFORMANCE=1 ./gradlew :docuconf-kotlin-core:jvmTest`.
+Run it with `DOCUCONF_GO_DIR=../docuconf-go scripts/conformance.sh`, which also runs the export
+checks below, or with `DOCUCONF_CONFORMANCE=../docuconf-go/conformance/cases.json DOCUCONF_REQUIRE_CONFORMANCE=1 ./gradlew :docuconf-hoplite:test`.
 
 - `DOCUCONF_CONFORMANCE` is the path to `cases.json`; without it the runner looks for
   `../docuconf-go/conformance/cases.json` next to this repository.
 - A missing file skips the suite, unless `DOCUCONF_REQUIRE_CONFORMANCE=1`, as in CI, where it fails.
-- **Skipped tags: none.** `int64` is supported (Kotlin `Long` holds every 64-bit integer) and so is
-  `json-schema` (`JsonSchemaValidator` checks `json` values against their schema).
+- **Capability tags: all supported, none skipped.** The runner keeps an allow-list of the tags this
+  SDK supports: `int64` (Kotlin `Long` holds every 64-bit integer), `json-schema`
+  (`JsonSchemaValidator` checks `json` values against their schema), `key-set`, `deprecated`,
+  `strict-parsing`, `files`, `profiles` and `overlays`. A case with any other tag, including one the
+  runner has never heard of, is skipped, never run, and a skipped case fails the run.
+
+`ConformanceExportTest` declares docuconf-go's shared export fixture (`conformance/export/fixture.yaml`)
+with this SDK's annotations, exports it, and runs
+`docuconf conformance export --golden <docuconf-go>/conformance/export/golden.cue` on the result. It
+finds the CLI with `DOCUCONF_CLI`, else `docuconf` on `PATH` (`scripts/conformance.sh` builds it from
+`DOCUCONF_GO_DIR` when neither is there). The comparison is not clean, by one gap: the fixture's
+`settings` and `serving-tls` inputs declare `reload: watch`, and this SDK reads files once, at boot,
+so it rejects `watch` at declaration time (SPEC §11.2 item 8). The test requires exactly those two
+differences and no other, and the SDK keeps its own golden contract
+(`docuconf-hoplite/src/test/resources/golden/gateway.cue`) as well.
 
 ## Mobile (Android and iOS)
 
@@ -65,8 +107,9 @@ The contract format may need a build-time variant for this (SPEC §13, open ques
 
 - `reload: watch` (file watching); file inputs and overlays are read once, and overlays declared
   `watch` are rejected.
-- Profiles (`profiles` in the contract) from per-environment files.
-- `indexed` and `json` list encodings for declared config classes (they are read as `csv`). The
-  contract-first mode parses all three.
+- Profiles for declared classes: a Hoplite class does not read per-profile files. The contract-first
+  mode applies a contract's `profiles`.
+- `indexed` and `json` list encodings for declared config classes (they are read as `csv`, with
+  `@Separator` for another separator). The contract-first mode parses all three.
 - `@ConfigAlias` names are not exported (a warning says so); use `@Env`.
 - Reading a `deprecated.replacedBy` variable's old name as a fallback.

@@ -75,7 +75,7 @@ internal object HopliteLoader {
             }
             if (v.spec.default == value) return@mapNotNull null
             val contract = v.spec.default?.let { "has default $it" } ?: "requires it"
-            "${v.spec.name}: your Hoplite loader reads ${v.spec.configKey} = $value from ${fileSources.joinToString { it.source() }}, " +
+            "${v.spec.name}: your Hoplite loader reads ${v.path.joinToString(DeclarationReader.KEY_SEPARATOR)} = $value from ${fileSources.joinToString { it.source() }}, " +
                 "but the exported contract $contract. Export only reads @DocuconfService(baseSources = [...]): " +
                 "list ${if (fileSources.size == 1) "that file" else "those files"} there${if (settings.baseSources.isEmpty()) "" else " (now ${settings.baseSources})"}, so load and export agree."
         }

@@ -16,6 +16,7 @@ import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import kotlin.time.Duration.Companion.hours
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
 
@@ -116,12 +117,16 @@ class LoadTest {
     }
 
     @Test
-    fun acceptsHopliteDurationForms(@TempDir root: Path) {
+    fun durationsAreExactlyIso8601(@TempDir root: Path) {
+        // The contract says iso8601, so that grammar exactly (SPEC §5): PT1,5S and days too, but not
+        // the Go or Hoplite forms Hoplite alone would take.
         val w = World(root)
-        w.env += mapOf("TIMEOUT" to "45s", "IDLE" to "3m")
+        w.env += mapOf("TIMEOUT" to "PT1,5S", "IDLE" to "P1DT3M")
         val cfg = Docuconf.load<GatewayConfig>(w.options)
-        assertEquals(Duration.ofSeconds(45), cfg.timeout)
-        assertEquals(3.minutes, cfg.idle)
+        assertEquals(Duration.ofMillis(1500), cfg.timeout)
+        assertEquals(24.hours + 3.minutes, cfg.idle)
+        w.env += mapOf("TIMEOUT" to "45s", "IDLE" to "pt3m")
+        assertEquals(listOf("TIMEOUT" to Codes.INVALID_TYPE, "IDLE" to Codes.INVALID_TYPE), w.violations().map { it.input to it.code }.sortedByDescending { it.first })
     }
 
     @Test

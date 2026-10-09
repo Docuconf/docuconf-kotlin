@@ -168,8 +168,10 @@ docuconf-go owns the spec, the CUE meta-schema (`spec/cue`), the conformance sui
   a `docuconf-go-updated` dispatch (this needs the release GitHub App), otherwise on its daily schedule. CI on that PR
   is the compatibility check; merge it when it is green, or fix the SDK on the same branch. It can also be run by hand
   with a specific `sha`.
-- **`scripts/conformance.sh`** runs only the docuconf-go-facing checks (the conformance suite and the `cue vet` of
-  exported contracts) against any checkout: `DOCUCONF_GO_DIR=../docuconf-go scripts/conformance.sh`. CI runs it, and
+- **`scripts/conformance.sh`** runs only the docuconf-go-facing checks (the conformance suite, which fails if any case
+  is skipped, the shared export fixture compared with `conformance/export/golden.cue` by the `docuconf` CLI, built
+  from the checkout when it is not on `PATH`, and the `cue vet` of exported contracts) against any checkout:
+  `DOCUCONF_GO_DIR=../docuconf-go scripts/conformance.sh`. CI runs it, and
   so does docuconf-go's downstream workflow, which runs it against every docuconf-go pull request that touches the spec,
   the conformance suite or the CLI. It needs JDK 17+ and `cue` on `PATH`, and sets this build's `DOCUCONF_SPEC_DIR` and `DOCUCONF_REQUIRE_CUE` from the contract's `DOCUCONF_SPEC_CUE` and `DOCUCONF_REQUIRE_VET`.
 

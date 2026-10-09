@@ -83,10 +83,46 @@ public annotation class Group(val value: String)
 @Retention(AnnotationRetention.RUNTIME)
 public annotation class Examples(vararg val values: String)
 
-/** Marks a variable or file input deprecated. docuconf warns at boot when it is still set. */
+/**
+ * Marks a variable or file input deprecated (SPEC §4.2): the platform should stop setting it. When it
+ * is still set, docuconf logs a warning at boot naming the input and [message], never the value; it
+ * still loads and is still checked.
+ *
+ * @property message what to use instead, or why the input is going away: not blank, at most 500 characters.
+ * @property replacedBy the variable (or file input) that replaces it, if any.
+ *
+ * A required input cannot be deprecated, since the platform could not stop setting it: give it a
+ * default or make it nullable first. Both rules fail when the class is first loaded or exported.
+ */
 @Target(AnnotationTarget.VALUE_PARAMETER)
 @Retention(AnnotationRetention.RUNTIME)
 public annotation class DeprecatedInput(val message: String, val replacedBy: String = "")
+
+/**
+ * The separator of a `List` or [dev.docuconf.kotlin.core.KeySet] in the environment (the `csv`
+ * encoding, SPEC §5). Default `,`. Items are split on every occurrence and never trimmed.
+ */
+@Target(AnnotationTarget.VALUE_PARAMETER)
+@Retention(AnnotationRetention.RUNTIME)
+public annotation class Separator(val value: String)
+
+/**
+ * Bounds on the number of keys in a [dev.docuconf.kotlin.core.KeySet] (exported as `minKeys` and
+ * `maxKeys`, SPEC §4.3). The defaults are 1 and 2: one key, or two during a rotation. A number of keys
+ * outside them is `too_few_items` or `too_many_items` at boot.
+ */
+@Target(AnnotationTarget.VALUE_PARAMETER)
+@Retention(AnnotationRetention.RUNTIME)
+public annotation class Keys(val min: Int = 1, val max: Int = 2)
+
+/**
+ * Length bounds in characters (Unicode code points) of every key in a
+ * [dev.docuconf.kotlin.core.KeySet] (exported as `keyMinLength` and `keyMaxLength`, SPEC §4.3). A key
+ * outside them, and an empty key whatever the bounds, is `out_of_range` at boot. -1 means no bound.
+ */
+@Target(AnnotationTarget.VALUE_PARAMETER)
+@Retention(AnnotationRetention.RUNTIME)
+public annotation class KeyLength(val min: Int = -1, val max: Int = -1)
 
 /**
  * Leaves a parameter out of the contract. Use it for settings the platform does not supply, such

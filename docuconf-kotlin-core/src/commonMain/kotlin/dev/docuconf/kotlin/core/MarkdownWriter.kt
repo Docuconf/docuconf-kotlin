@@ -54,6 +54,9 @@ public object MarkdownWriter {
         v.itemMax?.let { "itemMax $it" },
         v.itemMinLength?.let { "itemMinLength $it" },
         v.itemMaxLength?.let { "itemMaxLength $it" },
+        if (v.type == VarType.KEY_SET) "${v.minKeys ?: ValueChecks.DEFAULT_MIN_KEYS} to ${v.maxKeys ?: ValueChecks.DEFAULT_MAX_KEYS} keys" else null,
+        v.keyMinLength?.let { "keyMinLength $it" },
+        v.keyMaxLength?.let { "keyMaxLength $it" },
     ).joinToString("; ")
 
     private fun cell(s: String): String = s.replace("|", "\\|").replace("\n", " ")

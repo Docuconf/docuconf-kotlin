@@ -143,7 +143,8 @@ class ValueChecksTest {
         assertEquals(emptyList(), codes(timeout, "PT30S"))
         assertEquals(listOf(Codes.OUT_OF_RANGE), codes(timeout, "PT10M"))
         assertEquals(listOf(Codes.INVALID_TYPE), codes(timeout, "30s"))
-        assertEquals(emptyList(), ValueChecks.check(timeout, "30s", ValueChecks.Options(hostDuration = { if (it == "30s") 30 * Durations.NANOS_PER_SECOND else null })))
+        // Exactly the encoding's grammar (SPEC §5): no Go syntax for an iso8601 duration.
+        assertEquals(listOf(Codes.INVALID_TYPE), codes(timeout, "1m30s"))
     }
 
     @Test

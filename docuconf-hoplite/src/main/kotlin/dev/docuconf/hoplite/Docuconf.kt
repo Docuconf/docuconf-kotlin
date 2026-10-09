@@ -18,6 +18,7 @@ import com.sksamuel.hoplite.transformer.PathNormalizer
 import dev.docuconf.kotlin.core.Codes
 import dev.docuconf.kotlin.core.ConfigViolationException
 import dev.docuconf.kotlin.core.Contract
+import dev.docuconf.kotlin.core.ContractFirst
 import dev.docuconf.kotlin.core.CueWriter
 import dev.docuconf.kotlin.core.DeclarationChecks
 import dev.docuconf.kotlin.core.DeclarationException
@@ -201,34 +202,29 @@ public object Docuconf {
         val typos = Typos.find(env, contract, settings.prefix)
         typos.forEach { (set, declared) -> warnings += "$set is set but not declared; did you mean $declared?" }
 
-        val hostOptions = ValueChecks.Options(
-            trimListItems = true,
-            hostDuration = ::hopliteDuration,
-            lenientBools = setOf("t", "f", "1", "0", "yes", "no"),
-            durationHint = DURATION_HINT,
-        )
-        // The values docuconf hands Hoplite, keyed by property path (db.poolSize), so Hoplite's own
-        // environment naming never applies.
-        val values = LinkedHashMap<String, String>()
+        // The values docuconf hands Hoplite, already parsed and keyed by property path (db.poolSize),
+        // so Hoplite's own environment naming, and its more lenient parsing, never apply (SPEC §5).
+        val values = LinkedHashMap<List<String>, Node>()
         for (v in vars) {
             val raw = env[v.spec.name]
             // Hoplite reads sources in order, so the first overlay declared that holds the key wins.
             val fromOverlay = overlays.firstNotNullOfOrNull { o ->
                 o.root?.let { Overlays.at(it, v.path) }?.takeIf { it !is Undefined && it !is NullNode }?.let { o to it }
             }
-            // Hoplite would fail to parse "" for a non-string type; unset lets the overlay or default apply.
+            // Unset (absent, or empty for any type but string) lets the overlay or default apply.
             val unset = ValueChecks.isUnset(v.spec, raw)
-            if (!unset) values[v.path.joinToString(".")] = raw!!
             if (!unset || fromOverlay != null) {
-                v.spec.deprecated?.let { d -> warnings += "${v.spec.name} is deprecated: ${d.message}" + (d.replacedBy?.let { r -> " Use $r." } ?: "") }
+                v.spec.deprecated?.let { d -> warnings += ContractFirst.deprecationWarning(v.spec.name, d) }
             }
-            val found = when {
-                fromOverlay != null && (unset || v.spec.secret) -> Overlays.check(v, fromOverlay.second, fromOverlay.first.spec, hostOptions)
+            val parsed = when {
+                fromOverlay != null && (unset || v.spec.secret) -> Overlays.check(v, fromOverlay.second, fromOverlay.first.spec)
                 else -> {
                     if (fromOverlay != null) warnings += "${v.spec.name} is set in the environment and in overlay ${fromOverlay.first.spec.name}; the environment wins"
-                    ValueChecks.check(v.spec, raw, hostOptions) + emptyItems(v.spec, raw)
+                    ValueChecks.parse(v.spec, raw)
                 }
             }
+            val found = parsed.violations
+            parsed.value?.let { values[v.path] = valueNode(v.spec, it) }
             violations += found.map { f ->
                 val typo = typos.entries.firstOrNull { it.value == f.input }?.key
                 if (f.code == Codes.MISSING_REQUIRED && typo != null) f.copy(message = "${f.message} ($typo is set; a typo?)") else f
@@ -243,7 +239,7 @@ public object Docuconf {
         }
         val files = FileLoader(env, fileRoot, options.clock, classLoader, options.hopliteConfig)
         for (f in decl.files) {
-            if (f.spec.deprecated != null && Files.exists(files.resolve(f.spec))) warnings += "file ${f.spec.name} is deprecated: ${f.spec.deprecated!!.message}"
+            if (f.spec.deprecated != null && Files.exists(files.resolve(f.spec))) warnings += ContractFirst.deprecationWarning("file ${f.spec.name}", f.spec.deprecated!!)
             files.load(f)
         }
         violations += files.violations
@@ -255,15 +251,15 @@ public object Docuconf {
             userBuilder = userBuilder,
             hopliteConfig = options.hopliteConfig,
             // Hoplite: earlier sources win. So: environment > overlays > base files (SPEC §4.7).
-            front = listOf(MapPropertySource(markers), MapPropertySource(values)),
+            front = listOf(MapPropertySource(markers), NodeSource(values)),
             files = { overlays.forEach { addPathSource(it.path, optional = true, allowEmpty = true) }; settings.baseSources.forEach { addResourceOrFileSource(it) } },
             decoders = valueDecoders() + FileInputDecoder(files.loaded),
         )
         if (userBuilder != null) HopliteLoader.checkUserFiles(loader.user, vars, settings)
-        // A secret list's items too, longest first, so an error that quotes one item never shows it.
+        // A secret list's and key set's items too, longest first, so an error that quotes one item never shows it.
         val secrets = vars.filter { it.spec.secret }.flatMap { v ->
             val raw = env[v.spec.name]?.takeIf { it.isNotEmpty() } ?: return@flatMap emptyList()
-            val items = if (v.spec.type == VarType.LIST) raw.split(v.spec.separator).map(String::trim).filter { it.length >= 4 } else emptyList()
+            val items = if (v.spec.type == VarType.LIST || v.spec.type == VarType.KEY_SET) raw.split(v.spec.separator).filter { it.trim().length >= 4 } else emptyList()
             listOf(raw) + items
         }.distinct().sortedByDescending { it.length }
         val bound = try {
@@ -279,16 +275,6 @@ public object Docuconf {
             { failure -> LoadResult.Failure(HopliteFailures.violations(failure, type, vars, secrets), warnings) },
             { value -> LoadResult.Success(value, warnings) },
         )
-    }
-
-    /** `ALLOWED_ORIGINS=","` gives two empty items; an empty csv item is never what the platform meant. */
-    private fun emptyItems(spec: VarSpec, raw: String?): List<Violation> {
-        if (spec.type != VarType.LIST || spec.listEncoding != ListEncoding.CSV || raw.isNullOrEmpty()) return emptyList()
-        // itemMinLength already reports an empty item as out_of_range (SPEC §4.3): one problem, one line.
-        if ((spec.itemMinLength ?: 0) >= 1) return emptyList()
-        val empty = raw.split(spec.separator).withIndex().filter { it.value.trim().isEmpty() }.map { it.index }
-        if (empty.isEmpty()) return emptyList()
-        return listOf(Violation(Codes.INVALID_TYPE, spec.name, "item${if (empty.size == 1) "" else "s"} ${empty.joinToString(", ")} ${if (empty.size == 1) "is" else "are"} empty; separate items with a single ${spec.separator}"))
     }
 
     /**
@@ -415,6 +401,8 @@ public object Docuconf {
                 val items = if (node is ArrayNode) node.elements.map { (it as? StringNode)?.value ?: toJson(it).toString() } else scalar().split(",").map { it.trim() }
                 JsonValue.Arr(items.map { if (spec.items == ListItems.INT) JsonValue.Int(it.toLongOrNull() ?: bad()) else JsonValue.Str(it) })
             }
+            // A key set is secret, so a base file never holds one (withDefaults rejects it first).
+            VarType.KEY_SET -> bad()
             VarType.JSON -> if (node is StringNode) {
                 try {
                     JsonValue.parse(node.value)
