@@ -18,6 +18,14 @@ kotlin {
 dependencies {
     // The SDK from this repository, not a published version.
     implementation(project(":docuconf-hoplite"))
+    testImplementation(kotlin("test"))
+    testImplementation(platform(libs.junit.bom))
+    testImplementation(libs.junit.jupiter)
+    testRuntimeOnly(libs.junit.launcher)
+}
+
+tasks.test {
+    useJUnitPlatform()
 }
 
 application {

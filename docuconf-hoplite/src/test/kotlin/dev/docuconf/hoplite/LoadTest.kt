@@ -316,4 +316,30 @@ class LoadTest {
         assertTrue(bad.violations.all { it.code == Codes.OUT_OF_RANGE }, bad.violations.toString())
         assertFalse(bad.violations.toString().contains("s3cr3t"))
     }
+
+    // A key set (SPEC §6.1, docuconf-go conformance/load/key_set.yaml): a List<Secret> of one or two keys.
+    @Test
+    fun secretListAtBoot(@TempDir dir: Path) {
+        data class Hooks(
+            @Doc("Keys that verify webhook signatures") @Items(min = 1, max = 2) @ItemLength(min = 32, max = 256)
+            val webhookKeys: List<com.sksamuel.hoplite.Secret>? = null,
+        )
+        val old = "old-webhook-key-0123456789abcdef0123"
+        val new = "new-webhook-key-0123456789abcdef0123"
+        fun check(value: String) = Docuconf.check(Hooks::class, DocuconfOptions().apply { env = mapOf("WEBHOOK_KEYS" to value); terminationLog = dir.resolve("termination-log").toString() })
+        val ok = check("$old,$new")
+        assertIs<LoadResult.Success<Hooks>>(ok, ok.toString())
+        assertEquals(listOf(old, new), ok.value.webhookKeys!!.map { it.value })
+        assertFalse(ok.value.toString().contains(old), ok.value.toString())
+        val unset = check("")
+        assertIs<LoadResult.Success<Hooks>>(unset, unset.toString())
+        assertEquals(null, unset.value.webhookKeys)
+        for ((value, code) in listOf("$old," to Codes.OUT_OF_RANGE, "$old,new-webhook-key" to Codes.OUT_OF_RANGE, "$old,$new,$old" to Codes.TOO_MANY_ITEMS)) {
+            val bad = check(value)
+            assertIs<LoadResult.Failure>(bad)
+            // One problem each: an empty item is out_of_range under itemMinLength, not also invalid_type.
+            assertEquals(listOf(code to "WEBHOOK_KEYS"), bad.violations.map { it.code to it.input }, bad.violations.toString())
+            assertFalse(bad.violations.toString().contains("webhook-key"), bad.violations.toString())
+        }
+    }
 }

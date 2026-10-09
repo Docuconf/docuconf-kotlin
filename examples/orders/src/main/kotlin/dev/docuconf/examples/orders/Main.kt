@@ -15,11 +15,27 @@ fun main() {
     val server = HttpServer.create(InetSocketAddress(config.port), 0)
     server.createContext("/healthz") { it.respond("text/plain", "ok") }
     server.createContext("/config") { it.respond("application/json", config.redacted()) }
+    // Payment webhooks, signed with any key in WEBHOOK_KEYS (see OrdersConfig for how to rotate it).
+    server.createContext("/webhooks/payments") { ex ->
+        val status = when {
+            ex.requestMethod != "POST" -> 405
+            else -> {
+                val body = ex.requestBody.use { it.readNBytes(MAX_WEBHOOK_BODY + 1) }
+                when {
+                    body.size > MAX_WEBHOOK_BODY -> 413
+                    verifyWebhook(config.webhookKeys, body, ex.requestHeaders.getFirst("X-Signature")) -> 204
+                    else -> 401
+                }
+            }
+        }
+        ex.sendResponseHeaders(status, -1)
+        ex.close()
+    }
     server.start()
     println("orders listening on :${config.port} (log level ${config.logLevel})")
 }
 
-/** The loaded configuration as JSON, with the secret replaced by `***`. */
+/** The loaded configuration as JSON, with the secrets replaced by `***`, set or not. */
 fun OrdersConfig.redacted(): String = JsonValue.of(
     mapOf(
         "PORT" to port,
@@ -28,6 +44,7 @@ fun OrdersConfig.redacted(): String = JsonValue.of(
         "ALLOWED_ORIGINS" to allowedOrigins,
         "REQUEST_TIMEOUT" to Durations.formatGo(requestTimeout.toNanos()),
         "WORKER_COUNT" to workerCount,
+        "WEBHOOK_KEYS" to "***",
     ),
 ).toString()
 

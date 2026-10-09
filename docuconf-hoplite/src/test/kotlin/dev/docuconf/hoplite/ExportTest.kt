@@ -2,6 +2,8 @@ package dev.docuconf.hoplite
 
 import com.sksamuel.hoplite.Secret
 import dev.docuconf.kotlin.core.DeclarationException
+import dev.docuconf.kotlin.core.ListItems
+import dev.docuconf.kotlin.core.VarType
 import org.junit.jupiter.api.io.TempDir
 import java.io.OutputStream
 import java.io.PrintStream
@@ -189,6 +191,23 @@ class ExportTest {
         assertContains(assertFailsWith<DeclarationException> { Docuconf.contract(MinOnUrl::class, "svc") }.message!!, "minLength only applies to strings")
         data class BadDefault(@Doc("Branch codes") @ItemLength(max = 4) val codes: List<String> = listOf("BE", "ZÜRICH"))
         assertContains(assertFailsWith<DeclarationException> { Docuconf.contract(BadDefault::class, "svc") }.message!!, "above itemMaxLength 4")
+    }
+
+    @Test
+    fun aListOfSecretsIsASecretList(@TempDir dir: Path) {
+        data class Hooks(
+            @Doc("Keys that verify webhook signatures") @Items(min = 1, max = 2) @ItemLength(min = 32, max = 256)
+            val webhookKeys: List<Secret>? = null,
+        )
+        val v = Docuconf.contract(Hooks::class, "svc").variable("WEBHOOK_KEYS")!!
+        assertTrue(v.secret)
+        assertEquals(VarType.LIST, v.type)
+        assertEquals(ListItems.STRING, v.items)
+        assertEquals(32 to 256, v.itemMinLength to v.itemMaxLength)
+        val (exit, out) = Cue.run(Cue.module(dir, Docuconf.exportCue(Hooks::class, "svc")), dir, "vet", "-c", "./svc")
+        assertEquals(0, exit, "cue vet -c failed:\n$out")
+        data class WithDefault(@Doc("Keys that verify webhook signatures") val keys: List<Secret> = listOf(Secret("k")))
+        assertContains(assertFailsWith<DeclarationException> { Docuconf.contract(WithDefault::class, "svc") }.message!!, "a secret cannot have a default")
     }
 
     @Test
