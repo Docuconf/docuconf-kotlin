@@ -4,6 +4,29 @@ All notable changes to docuconf-kotlin are documented here. Entries after 0.1.0 
 [release-please](https://github.com/googleapis/release-please) from Conventional Commit messages; see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.2.0](https://github.com/Docuconf/docuconf-kotlin/compare/v0.1.0...v0.2.0) (2026-10-09)
+
+
+### Features
+
+* beta suite (keySet, deprecated rules, strict parsing, files, profiles, overlays) ([8d6995f](https://github.com/Docuconf/docuconf-kotlin/commit/8d6995fa983e9c738ed3a47533cabfb5c8f398af))
+* beta suite (keySet, deprecated rules, strict parsing, files, profiles, overlays) ([9894bc6](https://github.com/Docuconf/docuconf-kotlin/commit/9894bc6b6d3d2b00367b1a918256e8aff493f0a2))
+* devX fixes (flat env naming, Ktor module, Gradle plugin, loadOrExit) ([951f6bd](https://github.com/Docuconf/docuconf-kotlin/commit/951f6bd7b424791ec9f35460b6e101344703690a))
+* **examples:** dual-key webhook key set with rotation ([612547b](https://github.com/Docuconf/docuconf-kotlin/commit/612547b9811a742dc63fee5b3d45398358c56561))
+* **examples:** dual-key webhook key set with rotation; secret lists ([2254f50](https://github.com/Docuconf/docuconf-kotlin/commit/2254f502b8653c400fdacf346ee35e330b4c8b89))
+* export description and details from doc comments ([c5c9f24](https://github.com/Docuconf/docuconf-kotlin/commit/c5c9f247e69ed4e37f6a6eab7254df07ccd448f8))
+* export description and details from doc comments ([66b4171](https://github.com/Docuconf/docuconf-kotlin/commit/66b4171ccd9a55df19bc3fda3af4839b555d3f85))
+* maxLength on url/json and item length limits on string lists ([d96c0ea](https://github.com/Docuconf/docuconf-kotlin/commit/d96c0eaad464b04debc05c41f1bdb97a69642c77))
+* maxLength on url/json and item length limits on string lists ([982c886](https://github.com/Docuconf/docuconf-kotlin/commit/982c886242746ebeb6ebd50795abb1b21f1b1221))
+* reload: watch for file inputs ([7f8bec2](https://github.com/Docuconf/docuconf-kotlin/commit/7f8bec23d308acf8614d16e023fa0e9293dfa962))
+
+
+### Documentation
+
+* **examples:** length limits and generated CONFIG docs ([24f3c38](https://github.com/Docuconf/docuconf-kotlin/commit/24f3c3856cd0173a30f4136fbea5c969ffcd3edc))
+* keep one release-please-managed version per README line ([3a1d120](https://github.com/Docuconf/docuconf-kotlin/commit/3a1d1204dade7e5ad21437a7f76cb0c17fded772))
+* link docuconf.dev ([3fa9516](https://github.com/Docuconf/docuconf-kotlin/commit/3fa9516f18e9c6f828fea38af7a3950ceaceceb8))
+
 ## 0.1.0
 
 First version: typed configuration contracts for Kotlin services on [Hoplite](https://github.com/sksamuel/hoplite),

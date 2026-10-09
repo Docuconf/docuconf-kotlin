@@ -131,7 +131,7 @@ internal class ServiceSettings(val name: String?, val prefix: String, val baseSo
  */
 public object Docuconf {
     /** This library's version, recorded in `metadata.generator`. */
-    public const val VERSION: String = "0.1.0" // x-release-please-version
+    public const val VERSION: String = "0.2.0" // x-release-please-version
 
     /** The SDK name recorded in `metadata.generator`. */
     public const val SDK: String = "docuconf-hoplite"

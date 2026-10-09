@@ -45,7 +45,7 @@ plugins {
 }
 
 dependencies {
-    implementation("dev.docuconf:docuconf-hoplite:0.1.0-SNAPSHOT") // x-release-please-version
+    implementation("dev.docuconf:docuconf-hoplite:0.2.0") // x-release-please-version
     testImplementation(kotlin("test"))
 }
 ```
@@ -57,8 +57,8 @@ run this in the docuconf checkout and add `mavenLocal()` to your repositories:
 ./gradlew publishToMavenLocal
 ```
 
-That publishes `0.1.0-SNAPSHOT` to `~/.m2`. <!-- x-release-please-version -->
-Registry install (`implementation("dev.docuconf:docuconf-hoplite:0.1.0")` <!-- x-release-please-version -->
+That publishes `0.2.0` to `~/.m2`. <!-- x-release-please-version -->
+Registry install (`implementation("dev.docuconf:docuconf-hoplite:0.2.0")` <!-- x-release-please-version -->
 from Maven Central, `id("dev.docuconf")` from the Gradle Plugin Portal) comes with the first release.
 
 | Artifact | What it is |
