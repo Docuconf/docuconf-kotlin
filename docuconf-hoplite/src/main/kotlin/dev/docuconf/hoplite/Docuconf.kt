@@ -38,6 +38,7 @@ import java.io.PrintStream
 import java.nio.file.Files
 import java.nio.file.Path
 import java.time.Clock
+import java.time.Duration
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.reflect.KClass
 import kotlin.reflect.full.findAnnotation
@@ -63,8 +64,18 @@ public class DocuconfOptions {
     /** The clock for certificate validity checks. */
     public var clock: Clock = Clock.systemUTC()
 
-    /** Receives warnings: deprecated inputs that are still set, feature-flag-like names, likely typos. */
+    /**
+     * Receives warnings: deprecated inputs that are still set, feature-flag-like names, likely typos,
+     * and changes to a [Watched] file that failed their checks (the previous content is kept).
+     */
     public var warn: (String) -> Unit = { System.err.println("docuconf: $it") }
+
+    /**
+     * How often a [Watched] file input checks whether its file changed, at most: one second by
+     * default. It checks when the app reads it, never in the background. [Duration.ZERO] checks at
+     * every read.
+     */
+    public var reloadInterval: Duration = Duration.ofSeconds(1)
 
     // Tests only: the prefix and base sources come from @DocuconfService, so load and export agree.
     internal var prefix: String? = null
@@ -244,6 +255,9 @@ public object Docuconf {
         }
         violations += files.violations
         if (violations.isNotEmpty()) return LoadResult.Failure(violations, warnings).also { warnings.forEach(options.warn) }
+        for (f in decl.files) {
+            if (f.watched) files.loaded[f.spec.name]?.let { files.loaded[f.spec.name] = watch(f, it, files, env, fileRoot, classLoader, options) }
+        }
 
         val markers = decl.files.filter { it.spec.name in files.loaded }.associate { it.path.joinToString(".") to FILE_MARKER + it.spec.name }
         val loader = HopliteLoader.build(
@@ -332,6 +346,29 @@ public object Docuconf {
     /** Markdown documentation of every input of [type]. */
     public fun exportMarkdown(type: KClass<*>, service: String? = null, appVersion: String? = null, configure: DocuconfOptions.() -> Unit = {}): String =
         MarkdownWriter.write(contract(type, service, appVersion, configure))
+
+    /**
+     * [initial], the file of [f] loaded at boot, as a [Watched] that reruns the boot checks with a
+     * loader of its own when the file changes.
+     */
+    private fun watch(
+        f: FileBinding,
+        initial: Any,
+        boot: FileLoader,
+        env: Map<String, String>,
+        fileRoot: String?,
+        classLoader: ClassLoader,
+        options: DocuconfOptions,
+    ): Watched<Any> {
+        val path = boot.resolve(f.spec)
+        val paths = if (f.spec.type == FileType.TLS) listOf("tls.crt", "tls.key", "ca.crt").map { path.resolve(it) } else listOf(path)
+        val reloader = Reloader(f.spec.name, paths, options.reloadInterval, options.warn) {
+            val loader = FileLoader(env, fileRoot, options.clock, classLoader, options.hopliteConfig)
+            loader.load(f)
+            loader.loaded[f.spec.name] to loader.violations.toList()
+        }
+        return Watched(initial, reloader)
+    }
 
     internal fun redact(message: String, secrets: List<String>): String = secrets.fold(message) { m, s -> m.replace(s, "****") }
 

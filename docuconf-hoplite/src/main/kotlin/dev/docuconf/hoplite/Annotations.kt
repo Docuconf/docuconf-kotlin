@@ -227,7 +227,9 @@ public annotation class ItemLength(val min: Int = -1, val max: Int = -1)
 
 /**
  * Declares a file input. Goes on a parameter of type [ConfigFile], [TlsKeyPair], [CaBundle],
- * [Keystore], [TextFile] or [BinaryFile]. A non-null parameter without a default is required.
+ * [Keystore], [TextFile] or [BinaryFile]. A non-null parameter without a default is required. The
+ * file is read once, at boot (`reload: restart`); declare the parameter [Watched] of one of these
+ * types (`Watched<TlsKeyPair>`) to have the app reread it when it changes (`reload: watch`).
  *
  * @property name the input name in the contract, a DNS label such as `serving-tls`.
  * @property path where the app reads it: a directory for [TlsKeyPair], a file otherwise. Absolute.
@@ -297,7 +299,7 @@ public annotation class KeystoreSpec(val format: KeystoreFormat = KeystoreFormat
  * @property path where the app reads the overlay. Absolute.
  * @property description what the overlay is for (optional, at least 5 characters).
  * @property reload only [Reload.RESTART]: a change rolls the pods. [Reload.WATCH] is rejected,
- *   because docuconf validates configuration once, at boot.
+ *   because docuconf binds the config class once, at boot. (File inputs can reload: see [Watched].)
  */
 @Target(AnnotationTarget.CLASS)
 @Retention(AnnotationRetention.RUNTIME)

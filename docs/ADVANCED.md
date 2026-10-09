@@ -75,10 +75,9 @@ checks below, or with `DOCUCONF_CONFORMANCE=../docuconf-go/conformance/cases.jso
 with this SDK's annotations, exports it, and runs
 `docuconf conformance export --golden <docuconf-go>/conformance/export/golden.cue` on the result. It
 finds the CLI with `DOCUCONF_CLI`, else `docuconf` on `PATH` (`scripts/conformance.sh` builds it from
-`DOCUCONF_GO_DIR` when neither is there). The comparison is not clean, by one gap: the fixture's
-`settings` and `serving-tls` inputs declare `reload: watch`, and this SDK reads files once, at boot,
-so it rejects `watch` at declaration time (SPEC §11.2 item 8). The test requires exactly those two
-differences and no other, and the SDK keeps its own golden contract
+`DOCUCONF_GO_DIR` when neither is there). The comparison must be clean: any difference fails the test.
+The fixture's `settings` and `serving-tls` inputs declare `reload: watch`, so they are `Watched<...>`
+(README, "Reloading files"). The SDK keeps its own golden contract
 (`docuconf-hoplite/src/test/resources/golden/gateway.cue`) as well.
 
 ## Mobile (Android and iOS)
@@ -105,8 +104,8 @@ The contract format may need a build-time variant for this (SPEC §13, open ques
 
 ## Not done in v0.1
 
-- `reload: watch` (file watching); file inputs and overlays are read once, and overlays declared
-  `watch` are rejected.
+- `reload: watch` for overlays, which are read once (an overlay declared `watch` is rejected), and
+  in the contract-first mode, which checks a contract's files once and returns their values.
 - Profiles for declared classes: a Hoplite class does not read per-profile files. The contract-first
   mode applies a contract's `profiles`.
 - `indexed` and `json` list encodings for declared config classes (they are read as `csv`, with

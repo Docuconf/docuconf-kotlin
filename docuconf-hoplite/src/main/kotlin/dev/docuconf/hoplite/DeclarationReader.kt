@@ -32,8 +32,11 @@ import kotlin.reflect.jvm.isAccessible
 /** A variable and where Hoplite binds it in the config class tree. */
 internal data class VarBinding(val spec: VarSpec, val path: List<String>, val type: KType)
 
-/** A file input and where it is bound. [valueType] is `T` of `ConfigFile<T>`. */
-internal data class FileBinding(val spec: FileSpec, val path: List<String>, val type: KType, val valueType: KType?)
+/**
+ * A file input and where it is bound. [type] is the file input type (`ConfigFile<T>`, without
+ * [Watched]), [valueType] is `T` of `ConfigFile<T>`, and [watched] says the parameter is `Watched<...>`.
+ */
+internal data class FileBinding(val spec: FileSpec, val path: List<String>, val type: KType, val valueType: KType?, val watched: Boolean = false)
 
 /** Everything docuconf reads from a config class. */
 internal data class Declaration(
@@ -138,7 +141,17 @@ internal object DeclarationReader {
                 val optional = parentOptional || p.isOptional || t.isMarkedNullable
                 val group = p.annotations.filterIsInstance<Group>().firstOrNull()?.value ?: inheritedGroup
                 when {
-                    kc in fileTypes -> fileInput(k, p, kc, here, optional, group)
+                    kc in fileTypes -> fileInput(k, p, t, here, optional, group, watched = false)
+                    kc == Watched::class -> {
+                        val inner = t.arguments.firstOrNull()?.type
+                        val ik = inner?.classifier as? KClass<*>
+                        when {
+                            inner == null || ik !in fileTypes ->
+                                errors += "${where(here)}: Watched applies to file inputs (ConfigFile, TlsKeyPair, CaBundle, Keystore, TextFile, BinaryFile), " +
+                                    "not ${ik?.simpleName ?: inner}; environment variables are read once, when the process starts"
+                            else -> fileInput(k, p, inner, here, optional, group, watched = true)
+                        }
+                    }
                     isScalar(kc, t) -> variable(k, p, kc, here, env?.let { listOf(it) } ?: hereEnv, optional, group, defaults)
                     kc == Map::class -> warnings += "${where(here)}: maps cannot be set by the platform through environment variables; left out of the contract (file-only)"
                     kc.isData || kc.primaryConstructor != null && !kc.java.isInterface && kc.java.`package`?.name?.startsWith("java.") != true -> {
@@ -162,11 +175,13 @@ internal object DeclarationReader {
                 }
             }
             if (a.reload == Reload.WATCH) {
-                // hoplite-watch's ReloadableConfig re-runs Hoplite alone, so a reload would bypass
-                // docuconf's checks and file inputs. Rather than export a promise it does not keep
-                // (SPEC §11.2 item 8), docuconf rejects watch.
-                errors += "$p: reload = WATCH is not supported; docuconf for Hoplite validates configuration once, at boot. " +
-                    "Use Reload.RESTART: the platform renders an immutable ConfigMap and rolls the pods on change."
+                // An overlay feeds values into the whole config class, which Hoplite binds once, and
+                // hoplite-watch's ReloadableConfig would re-run Hoplite without docuconf's checks.
+                // Rather than export a promise it does not keep (SPEC §11.2 item 8), docuconf rejects
+                // watch here. File inputs can reload: declare them Watched<...>.
+                errors += "$p: reload = WATCH is not supported for overlays; docuconf for Hoplite binds the config class once, at boot. " +
+                    "Use Reload.RESTART: the platform renders an immutable ConfigMap and rolls the pods on change. " +
+                    "(A file input can reload: declare it Watched<...>.)"
             }
             return OverlaySpec(
                 name = a.name,
@@ -421,7 +436,8 @@ internal object DeclarationReader {
             )
         }
 
-        fun fileInput(owner: KClass<*>, p: KParameter, k: KClass<*>, path: List<String>, optional: Boolean, group: String?) {
+        fun fileInput(owner: KClass<*>, p: KParameter, fileType: KType, path: List<String>, optional: Boolean, group: String?, watched: Boolean) {
+            val k = fileType.classifier as KClass<*>
             val a = p.annotations
             val input = a.filterIsInstance<FileInput>().firstOrNull()
             if (input == null) {
@@ -456,7 +472,7 @@ internal object DeclarationReader {
             var format: ConfigFormat? = null
             var schema: JsonValue? = null
             if (type == FileType.CONFIG) {
-                valueType = p.type.arguments.firstOrNull()?.type
+                valueType = fileType.arguments.firstOrNull()?.type
                 format = a.filterIsInstance<Format>().firstOrNull()?.value ?: when (input.path.substringAfterLast('.', "").lowercase()) {
                     "json" -> ConfigFormat.JSON
                     "yaml", "yml" -> ConfigFormat.YAML
@@ -496,10 +512,12 @@ internal object DeclarationReader {
                     pattern = a.filterIsInstance<Pattern>().firstOrNull()?.value,
                     minLength = length?.min?.takeIf { it >= 0 },
                     maxLength = length?.max?.takeIf { it >= 0 },
+                    reload = if (watched) Reload.WATCH else Reload.RESTART,
                 ),
                 path,
-                p.type,
+                fileType,
                 valueType,
+                watched,
             )
             if (tls != null && type != FileType.TLS) errors += "${where(path)}: @Tls only applies to TlsKeyPair"
         }
@@ -577,6 +595,7 @@ internal object DeclarationReader {
             k == Keystore::class -> Keystore(nowhere, java.security.KeyStore.getInstance("PKCS12"))
             k == TextFile::class -> TextFile(nowhere, "", false)
             k == BinaryFile::class -> BinaryFile(nowhere)
+            k == Watched::class -> Watched.of(placeholder(t.arguments.first().type!!) ?: "")
             else -> {
                 val ctor = k.primaryConstructor ?: throw IllegalArgumentException("no placeholder for ${k.simpleName}")
                 ctor.isAccessible = true

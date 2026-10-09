@@ -10,19 +10,14 @@ import java.nio.file.Files
 import java.nio.file.Path
 import java.time.Duration
 import java.util.concurrent.TimeUnit
-import kotlin.test.assertNotEquals
 import kotlin.test.assertTrue
 import kotlin.test.fail
 
 /**
  * The shared export fixture (SPEC §11.2 item 3, §12): docuconf-go's `conformance/export/fixture.yaml`
  * declared with this SDK's annotations, exported, and compared with `conformance/export/golden.cue`
- * as data by `docuconf conformance export --golden`.
- *
- * The comparison is not clean: two file inputs in the fixture declare `reload: watch`, which this SDK
- * rejects at declaration time because it validates files once, at boot, and does not reload them
- * (SPEC §11.2 item 8). The test therefore requires exactly those two differences and no other, and
- * the SDK keeps its own golden contract too (ExportTest).
+ * as data by `docuconf conformance export --golden`, which must report no difference. The two inputs
+ * the fixture declares `reload: watch` are [Watched].
  *
  * Needs the docuconf CLI (`DOCUCONF_CLI`, else `docuconf` on PATH) and docuconf-go (`DOCUCONF_GO_DIR`,
  * else the directory above `DOCUCONF_CONFORMANCE`'s, else `../docuconf-go`). Skips without them,
@@ -71,14 +66,14 @@ class ConformanceExportTest {
 
         @Doc("Application settings") @Group("general")
         @FileInput(name = "settings", path = "/etc/app/settings/settings.json", pathEnv = "SETTINGS_FILE", maxSize = 65536)
-        val settings: ConfigFile<FixtureSettings>,
+        val settings: Watched<ConfigFile<FixtureSettings>>,
         @Doc("Routing rules") @FileInput(name = "rules", path = "/etc/app/rules/rules.yaml")
         val rules: ConfigFile<FixtureSettings>? = null,
         @Doc("Feature defaults") @FileInput(name = "flags", path = "/etc/app/flags/flags.toml")
         val flags: ConfigFile<FixtureSettings>? = null,
         @Doc("Certificate the service serves HTTPS with") @FileInput(name = "serving-tls", path = "/etc/app/tls")
         @Tls(dnsNames = ["app.example.test", "api.example.test"], keyAlgorithms = [KeyAlgorithm.ECDSA, KeyAlgorithm.ED25519], minRemaining = "720h", requireCA = true)
-        val servingTls: TlsKeyPair? = null,
+        val servingTls: Watched<TlsKeyPair>? = null,
         @Doc("CAs the service trusts") @FileInput(name = "trust", path = "/etc/app/trust/bundle.pem") @MinCertificates(2)
         val trust: CaBundle? = null,
         @Doc("Client certificate for the partner API") @FileInput(name = "partner", path = "/etc/app/partner/keystore.p12")
@@ -91,15 +86,6 @@ class ConformanceExportTest {
         val geoip: BinaryFile? = null,
         @Doc("City-level location database") @FileInput(name = "geo-db", path = "/data/geo-db/geo.mmdb")
         val geoDb: BinaryFile? = null,
-    )
-
-    /**
-     * What `docuconf conformance export` reports for this SDK's export, one line per difference: the
-     * fixture's `reload: watch`, which this SDK rejects (it does not reload files).
-     */
-    private val knownGaps = listOf(
-        """files.serving-tls.reload: golden "watch", exported "restart"""",
-        """files.settings.reload: golden "watch", exported "restart"""",
     )
 
     @Test
@@ -123,11 +109,9 @@ class ConformanceExportTest {
         val p = ProcessBuilder(cli, "conformance", "export", "--golden", golden.toString(), out.absolutePath).redirectErrorStream(true).start()
         val output = p.inputStream.bufferedReader().readText()
         assertTrue(p.waitFor(120, TimeUnit.SECONDS), "docuconf conformance export timed out")
-        val diffs = output.lines().map { it.trim() }.filter { it.isNotEmpty() && !it.startsWith("docuconf:") && !it.contains(" does not match ") && !it.contains(" matches ") }
-        if (diffs != knownGaps) {
-            fail("docuconf conformance export (exit ${p.exitValue()}) reported:\n$output\nexpected exactly the known gaps:\n${knownGaps.joinToString("\n")}\nexported contract: $out")
+        if (p.exitValue() != 0 || !output.contains(" matches ")) {
+            fail("docuconf conformance export (exit ${p.exitValue()}) reported:\n$output\nexported contract: $out")
         }
-        assertNotEquals(0, p.exitValue(), "the known gaps should make the comparison fail")
     }
 
     private fun goDir(): Path? {

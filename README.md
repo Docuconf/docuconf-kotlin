@@ -170,7 +170,7 @@ class AppConfigTest {
 `Docuconf.check(AppConfig::class, options)` returns a `LoadResult` instead of throwing. To build an
 `AppConfig` by hand, the file input types have test factories: `ConfigFile.of(value)`,
 `TlsKeyPair.of(chain, key)`, `CaBundle.of(certs)`, `Keystore.of(keyStore)`, `TextFile.of(text)`,
-`BinaryFile.of(path)`. `fileRoot = tempDir.toString()` points file inputs at a test directory.
+`BinaryFile.of(path)`, and `Watched.of(value)` for a watched one. `fileRoot = tempDir.toString()` points file inputs at a test directory.
 
 ## 6. Export the contract
 
@@ -520,8 +520,40 @@ The schema of a config file is closed (`additionalProperties: false`) and uses t
 names exactly. Hoplite itself would also accept `pool-size` or `pool_size` for `poolSize`; the
 platform will not, so write the names as declared.
 
-`reload: watch` is not offered in v0.1: files are read once at boot (`reload: restart`), and the
-platform rolls the pods when a source changes.
+### Reloading files (`reload: watch`)
+
+A file input is read once, at boot (`reload: restart`), and the platform rolls the pods when its
+source changes. To have the app reread it instead, as a renewed certificate or an updated ConfigMap
+needs, declare the parameter `Watched<...>` of the file type; the contract then says `reload: watch`
+(SPEC §4.6.2):
+
+```kotlin
+@Doc("Certificate served on HTTPS")
+@FileInput(name = "serving-tls", path = "/etc/app/tls")
+@Tls(dnsNames = ["app.example.test"])
+val tls: Watched<TlsKeyPair>,
+```
+
+and read the value with `current()` each time it is used:
+
+```kotlin
+val replicas = config.settings.current().value.replicas
+```
+
+- `current()` checks the file at most once a second (`reloadInterval` in the options; `Duration.ZERO`
+  checks at every call), when the app reads it: there is no background thread and nothing to close.
+  `refresh()` checks now, whatever the interval. It follows symlinks and compares the resolved file's
+  identity (device and inode), modification time and size, so the `..data` symlink swap Kubernetes
+  makes when it updates a Secret or ConfigMap volume is a change, as is a file replaced in place.
+- A changed file goes through every check it passed at boot (parse, schema, binding, certificate
+  validity, key match, names, chain, pattern, size). If it fails, `current()` keeps the previous
+  value and each violation goes to `warn` once, with its code and the message a boot failure would
+  show, never a secret file's content. A file that disappears keeps its last value too.
+- Every file type can be watched. An optional input absent at boot is `null` (`Watched<X>?`) and is
+  not watched for appearing later. Kubernetes never updates a volume mounted with `subPath`, so mount
+  the directory. `Watched.of(value)` builds one for tests; it never reloads.
+- `Watched` applies only to file inputs: environment variables are read once, when the process
+  starts, and an overlay declared `reload = Reload.WATCH` is rejected (below).
 
 ## Boot validation
 
@@ -595,8 +627,9 @@ data class GatewayConfig(
   **checked like env values**, with the overlay and key in the message. A secret in an overlay is
   `invalid_type`.
 - The platform mounts the overlay's **directory**, so it must not hold files the app ships with; use
-  a directory of its own such as `/app/config`. `reload = Reload.WATCH` is rejected: docuconf
-  validates once, at boot, and the platform rolls the pods when the ConfigMap changes.
+  a directory of its own such as `/app/config`. `reload = Reload.WATCH` is rejected: an overlay
+  feeds the whole config class, which docuconf binds once, at boot, so the platform rolls the pods
+  when the ConfigMap changes. (A file input can reload: see `Watched` above.)
 
 ## More
 
@@ -611,8 +644,7 @@ SDK supports every capability tag in it: `int64`, `json-schema`, `key-set`, `dep
 `strict-parsing`, `files`, `profiles` and `overlays`. **No case is skipped**, and the run fails if one
 ever is; a tag the runner does not know is skipped rather than run, so that failure is how a new tag
 gets noticed. CI also exports the shared export fixture and compares it with docuconf-go's golden
-contract; the one difference is `reload: watch` on two file inputs, which this SDK rejects because it
-reads files once, at boot ([docs/ADVANCED.md](docs/ADVANCED.md#conformance)).
+contract, which must match with no difference ([docs/ADVANCED.md](docs/ADVANCED.md#conformance)).
 
 ## Development
 

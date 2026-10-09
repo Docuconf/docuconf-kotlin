@@ -203,7 +203,7 @@ internal class JsonVarDecoder : Decoder<Json<*>> {
 
 /** Hands file inputs, already loaded and checked by docuconf, to Hoplite when it binds the class. */
 internal class FileInputDecoder(private val loaded: Map<String, Any>) : Decoder<Any> {
-    private val types: Set<KClass<*>> = setOf(ConfigFile::class, TlsKeyPair::class, CaBundle::class, Keystore::class, TextFile::class, BinaryFile::class)
+    private val types: Set<KClass<*>> = setOf(ConfigFile::class, TlsKeyPair::class, CaBundle::class, Keystore::class, TextFile::class, BinaryFile::class, Watched::class)
 
     override fun supports(type: KType): Boolean = type.classifier in types
     override fun priority(): Int = 10
