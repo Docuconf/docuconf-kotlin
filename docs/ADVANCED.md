@@ -51,6 +51,14 @@ CA bundle, keystore or binary file is the same `TlsKeyPair`, `CaBundle`, `Keysto
 a declared class gets. Overlays are read as native values (JSON by docuconf's own strict reader, YAML
 and TOML by Hoplite's), matched at each variable's `configKey` split on `keySeparator`, exactly.
 
+A file input declared `reload: watch` is reloaded as a declared `Watched<...>` is (README, "Reloading
+files"): its value is a `Watched` of the value above, so read `current()` at each use, and it has
+`onChange` and `status`. `checkContract` and `loadContract` take `reloadInterval` and `warn` for it.
+An overlay declared `reload: watch` is rejected with a `DeclarationException` naming it, since
+overlays are read once; so is a watched file input when you pass `ContractFirst.check` an `Inputs`
+of your own whose `reloads(spec)` is false (the default). The mode never records `watch` and reads
+the file once.
+
 ## Conformance
 
 `ConformanceTest` (in `docuconf-hoplite`'s tests) runs docuconf-go's shared suite,
@@ -104,8 +112,8 @@ The contract format may need a build-time variant for this (SPEC §13, open ques
 
 ## Not done in v0.1
 
-- `reload: watch` for overlays, which are read once (an overlay declared `watch` is rejected), and
-  in the contract-first mode, which checks a contract's files once and returns their values.
+- `reload: watch` for overlays, which are read once (an overlay declared `watch` is rejected, in a
+  declared class and in the contract-first mode).
 - Profiles for declared classes: a Hoplite class does not read per-profile files. The contract-first
   mode applies a contract's `profiles`.
 - `indexed` and `json` list encodings for declared config classes (they are read as `csv`, with

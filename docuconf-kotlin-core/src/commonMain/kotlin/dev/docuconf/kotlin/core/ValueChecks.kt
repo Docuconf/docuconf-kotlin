@@ -272,10 +272,12 @@ public object ValueChecks {
         fun checkKeys(keys: List<String>): KeySet? {
             keys.forEachIndexed { i, key ->
                 val n = codePointCount(key)
+                // Positions are 1-based, as received: `old,` has an empty key 2 (SPEC §4.3).
+                val k = i + 1
                 when {
-                    n == 0 -> add(Codes.OUT_OF_RANGE, "key $i is empty")
-                    spec.keyMinLength != null && n < spec.keyMinLength -> add(Codes.OUT_OF_RANGE, "key $i is $n characters, below keyMinLength ${spec.keyMinLength}")
-                    spec.keyMaxLength != null && n > spec.keyMaxLength -> add(Codes.OUT_OF_RANGE, "key $i is $n characters, above keyMaxLength ${spec.keyMaxLength}")
+                    n == 0 -> add(Codes.OUT_OF_RANGE, "key $k is empty")
+                    spec.keyMinLength != null && n < spec.keyMinLength -> add(Codes.OUT_OF_RANGE, "key $k is $n characters, below keyMinLength ${spec.keyMinLength}")
+                    spec.keyMaxLength != null && n > spec.keyMaxLength -> add(Codes.OUT_OF_RANGE, "key $k is $n characters, above keyMaxLength ${spec.keyMaxLength}")
                 }
             }
             if (out.isNotEmpty()) return null
