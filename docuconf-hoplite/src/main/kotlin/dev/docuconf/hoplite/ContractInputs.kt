@@ -12,9 +12,11 @@ import dev.docuconf.kotlin.core.FileSpec
 import dev.docuconf.kotlin.core.JsonSyntaxException
 import dev.docuconf.kotlin.core.JsonValue
 import dev.docuconf.kotlin.core.OverlaySpec
+import dev.docuconf.kotlin.core.Reload
 import dev.docuconf.kotlin.core.Violation
 import java.nio.file.Files
 import java.time.Clock
+import java.time.Duration
 import kotlin.reflect.typeOf
 
 /**
@@ -25,23 +27,43 @@ import kotlin.reflect.typeOf
 internal class ContractInputs(
     env: Map<String, String>,
     private val fileRoot: String?,
-    clock: Clock,
+    private val clock: Clock,
     private val classLoader: ClassLoader,
+    private val reloadInterval: Duration = Duration.ofSeconds(1),
+    private val warn: (String) -> Unit = {},
 ) : ContractFirst.Inputs {
-    private val files = FileLoader(env, fileRoot, clock, classLoader) {}
+    /** The environment at load, copied: a reload resolves paths and opens keystores with it. */
+    private val env = env.toMap()
+    private val files = FileLoader(this.env, fileRoot, clock, classLoader) {}
+
+    /** Every file type reloads, as a declared `Watched<...>` does. */
+    override fun reloads(spec: FileSpec): Boolean = true
 
     override fun loadFile(spec: FileSpec, env: Map<String, String>): ContractFirst.LoadedFile {
         val before = files.violations.size
-        files.load(FileBinding(spec, listOf(spec.name), typeOf<Any>(), valueType = null))
+        files.load(binding(spec))
         val violations = files.violations.subList(before, files.violations.size).toList()
-        val value = files.loaded[spec.name]?.let { v ->
-            when (v) {
-                is ConfigFile<*> -> v.value
-                is TextFile -> v.text
-                else -> v
-            }
+        val value = files.loaded[spec.name]?.let(::contractValue)
+        if (value == null || violations.isNotEmpty() || spec.reload != Reload.WATCH) return ContractFirst.LoadedFile(value, violations)
+        // reload: watch (SPEC §4.6.2): the same reloader as a declared Watched<...>, with the same checks.
+        val reloader = Reloader(
+            spec.name, Docuconf.watchedPaths(files.resolve(spec), spec), reloadInterval, warn, clock,
+            initial = value,
+        ) {
+            val loader = FileLoader(this.env, fileRoot, clock, classLoader) {}
+            loader.load(binding(spec))
+            loader.loaded[spec.name]?.let(::contractValue) to loader.violations.toList()
         }
-        return ContractFirst.LoadedFile(value, violations)
+        return ContractFirst.LoadedFile(Watched<Any>(reloader), violations)
+    }
+
+    private fun binding(spec: FileSpec) = FileBinding(spec, listOf(spec.name), typeOf<Any>(), valueType = null)
+
+    /** A file's value as [ContractFirst.LoadedFile] holds it: a config file's data, a text file's text. */
+    private fun contractValue(v: Any): Any = when (v) {
+        is ConfigFile<*> -> v.value
+        is TextFile -> v.text
+        else -> v
     }
 
     override fun readOverlay(spec: OverlaySpec, env: Map<String, String>): ContractFirst.LoadedOverlay {
@@ -149,6 +171,12 @@ internal object ConfigData {
  * [env] (or [fileRoot]). File inputs are checked by the code that checks a declared class's files at
  * boot. YAML and TOML need Hoplite's parser module on the classpath.
  *
+ * A file input declared `reload: watch` is reloaded as a declared `Watched<...>` is: its value is a
+ * [Watched] of what [ContractValues.file] would return (the data, the text, or the reader's object),
+ * checked at most once per [reloadInterval] when read, with [Watched.onChange] and [Watched.status].
+ * Rejected changes go to [warn]. An overlay declared `reload: watch` is rejected with
+ * [DeclarationException] naming it: overlays are read once.
+ *
  * ```
  * val contract = ContractFirst.parse(File("contract.json").readText())
  * when (val r = Docuconf.checkContract(contract, System.getenv())) {
@@ -162,8 +190,10 @@ public fun Docuconf.checkContract(
     env: Map<String, String> = System.getenv(),
     fileRoot: String? = env["DOCUCONF_FILE_ROOT"],
     clock: Clock = Clock.systemUTC(),
+    reloadInterval: Duration = Duration.ofSeconds(1),
+    warn: (String) -> Unit = { System.err.println("docuconf: $it") },
 ): ContractFirst.Result {
-    val inputs = ContractInputs(env, fileRoot, clock, Docuconf::class.java.classLoader)
+    val inputs = ContractInputs(env, fileRoot, clock, Docuconf::class.java.classLoader, reloadInterval, warn)
     return ContractFirst.check(contract, env, inputs)
 }
 
@@ -173,7 +203,9 @@ public fun Docuconf.loadContract(
     env: Map<String, String> = System.getenv(),
     fileRoot: String? = env["DOCUCONF_FILE_ROOT"],
     clock: Clock = Clock.systemUTC(),
-): ContractValues = when (val r = checkContract(contract, env, fileRoot, clock)) {
+    reloadInterval: Duration = Duration.ofSeconds(1),
+    warn: (String) -> Unit = { System.err.println("docuconf: $it") },
+): ContractValues = when (val r = checkContract(contract, env, fileRoot, clock, reloadInterval, warn)) {
     is ContractFirst.Result.Success -> r.values
     is ContractFirst.Result.Failure -> throw ConfigViolationException(r.violations)
 }

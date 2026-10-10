@@ -46,7 +46,7 @@ class BetaTest {
             listOf("API_KEYS" to Codes.TOO_MANY_ITEMS, "WEBHOOK_KEYS" to Codes.OUT_OF_RANGE),
             e.violations.map { it.input to it.code }.sortedBy { it.first },
         )
-        assertContains(e.message!!, "WEBHOOK_KEYS: out_of_range: key 1 is empty")
+        assertContains(e.message!!, "WEBHOOK_KEYS: out_of_range: key 2 is empty")
         assertFalse(e.message!!.contains("old-key-123"))
     }
 

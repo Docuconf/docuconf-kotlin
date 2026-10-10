@@ -15,8 +15,11 @@ import kotlin.time.Duration.Companion.nanoseconds
  *
  * File inputs and overlays are files, which this multiplatform module does not read: pass [Inputs]
  * to read them. `docuconf-hoplite` does, with `Docuconf.checkContract` and `Docuconf.loadContract`,
- * which check every file input as boot validation does. Without [Inputs], file inputs and overlays in
- * the contract are not read.
+ * which check every file input as boot validation does, and reload a file input declared
+ * `reload: watch` (its value is then a [Reloadable]). An [Inputs] that cannot reload an input, and any
+ * overlay declared `watch`, make [check] throw [DeclarationException] naming it: this mode never
+ * records `watch` and reads the file once. Without [Inputs], file inputs and overlays in the contract
+ * are not read.
  *
  * ```
  * val contract = ContractFirst.parse(File("contract.json").readText())
@@ -56,6 +59,13 @@ public object ContractFirst {
          * does not parse, or does not hold an object, is `file_malformed` for the overlay's name.
          */
         public fun readOverlay(spec: OverlaySpec, env: Map<String, String>): LoadedOverlay
+
+        /**
+         * Whether [loadFile] reloads [spec], a file input declared `reload: watch`: its value is then a
+         * [Reloadable]. When false, [check] rejects a contract that declares `watch` for it, rather
+         * than read it once (SPEC §11.2 item 8). `docuconf-hoplite` reloads every file type.
+         */
+        public fun reloads(spec: FileSpec): Boolean = false
     }
 
     /**
@@ -102,6 +112,7 @@ public object ContractFirst {
      * reads file inputs and overlays; without it they are not read.
      */
     public fun check(contract: Contract, env: Map<String, String>, inputs: Inputs? = null): Result {
+        if (inputs != null) requireReloadable(contract, inputs)
         val warnings = DeclarationChecks.check(contract).warnings.toMutableList()
         val violations = ArrayList<Violation>()
         val values = LinkedHashMap<String, Any?>()
@@ -164,6 +175,20 @@ public object ContractFirst {
             }
         }
         return if (violations.isEmpty()) Result.Success(ContractValues(contract, values), warnings) else Result.Failure(violations, warnings)
+    }
+
+    /**
+     * Throws [DeclarationException] naming each input that [contract] declares `reload: watch` but
+     * [inputs] would read only once: an overlay (this mode reads overlays once, as a declared class
+     * does), or a file input that [Inputs.reloads] does not reload (SPEC §11.2 items 8 and 9).
+     */
+    private fun requireReloadable(contract: Contract, inputs: Inputs) {
+        val errors = contract.overlays.filter { it.reload == Reload.WATCH }.map {
+            "overlay ${it.name}: reload \"watch\" is not supported in the contract-first mode, which reads overlays once; declare it \"restart\""
+        } + contract.files.filter { it.reload == Reload.WATCH && !inputs.reloads(it) }.map {
+            "file ${it.name}: reload \"watch\" is not supported by this reader, which reads the file once; declare it \"restart\""
+        }
+        if (errors.isNotEmpty()) throw DeclarationException(errors)
     }
 
     /** Like [check], but throws [ConfigViolationException] listing every violation. */
@@ -482,7 +507,9 @@ public class ContractValues internal constructor(public val contract: Contract, 
     /**
      * A file input's value, or null when it is absent: the data as a [JsonValue] for a `config` file,
      * the text as a `String` for a `text` file, and the reader's object for the others (in
-     * `docuconf-hoplite`: `TlsKeyPair`, `CaBundle`, `Keystore`, `BinaryFile`).
+     * `docuconf-hoplite`: `TlsKeyPair`, `CaBundle`, `Keystore`, `BinaryFile`). For an input declared
+     * `reload: watch` it is a [Reloadable] of that value (`Watched` in `docuconf-hoplite`): read
+     * `current()` at each use.
      */
     public fun file(name: String): Any? {
         require(contract.file(name) != null && name in values) { "$name is not a file input read from the contract" }
@@ -499,17 +526,20 @@ public class ContractValues internal constructor(public val contract: Contract, 
             val file = contract.file(name)
             when {
                 v == null -> JsonValue.Null
-                file != null -> when (file.type) {
-                    FileType.CONFIG -> v as JsonValue
-                    FileType.TEXT -> JsonValue.Str(v as String)
-                    else -> JsonValue.Bool(true)
-                }
+                file != null && v is Reloadable<*> -> fileJson(file, v.current())
+                file != null -> fileJson(file, v)
                 v is Duration -> JsonValue.Str(Durations.formatGo(v.inWholeNanoseconds))
                 v is KeySet -> JsonValue.Arr(v.keys.map { JsonValue.Str(it) })
                 else -> JsonValue.of(v)
             }
         },
     )
+
+    private fun fileJson(file: FileSpec, v: Any): JsonValue = when (file.type) {
+        FileType.CONFIG -> v as JsonValue
+        FileType.TEXT -> JsonValue.Str(v as String)
+        else -> JsonValue.Bool(true)
+    }
 
     override fun toString(): String {
         val secrets = contract.vars.filter { it.secret }.map { it.name }.toSet() + contract.files.filter { it.isSecret }.map { it.name }
