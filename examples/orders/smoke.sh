@@ -74,7 +74,7 @@ set -e
 cat "$log"
 [ "$status" -eq 1 ] || fail "the app exited $status, not 1"
 grep -qx 'docuconf: 1 configuration problem:' "$log" || fail "not exactly one problem"
-grep -qx '  WEBHOOK_KEYS: out_of_range: key 1 is empty' "$log" || fail "no out_of_range for WEBHOOK_KEYS"
+grep -qx '  WEBHOOK_KEYS: out_of_range: key 2 is empty' "$log" || fail "no out_of_range for WEBHOOK_KEYS"
 if grep -q webhook-key "$log"; then fail "the output shows a key"; fi
 
 echo "== mid-rotation: either key is accepted, any other rejected"

@@ -81,7 +81,7 @@ message never shows a key:
 $ DATABASE_URL=postgres://orders:pw@localhost:5432/orders \
     WEBHOOK_KEYS=old-webhook-key-0123456789abcdef0123, examples/orders/build/install/orders/bin/orders
 docuconf: 1 configuration problem:
-  WEBHOOK_KEYS: out_of_range: key 1 is empty
+  WEBHOOK_KEYS: out_of_range: key 2 is empty
 ```
 
 [`WebhooksTest`](src/test/kotlin/dev/docuconf/examples/orders/WebhooksTest.kt) walks through a

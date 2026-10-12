@@ -541,8 +541,9 @@ val replicas = config.settings.current().value.replicas
 ```
 
 - `current()` checks the file at most once a second (`reloadInterval` in the options; `Duration.ZERO`
-  checks at every call), when the app reads it: there is no background thread and nothing to close.
-  `refresh()` checks now, whatever the interval. It follows symlinks and compares the resolved file's
+  checks at every call), when the app reads it. `refresh()` checks now, whatever the interval. While
+  an `onChange` hook is registered, a daemon thread also checks every interval (at least every
+  100 ms), so hooks fire without a read; with no hook there is no thread. It follows symlinks and compares the resolved file's
   identity (device and inode), modification time and size, so the `..data` symlink swap Kubernetes
   makes when it updates a Secret or ConfigMap volume is a change, as is a file replaced in place.
 - A changed file goes through every check it passed at boot (parse, schema, binding, certificate
@@ -554,6 +555,90 @@ val replicas = config.settings.current().value.replicas
   the directory. `Watched.of(value)` builds one for tests; it never reloads.
 - `Watched` applies only to file inputs: environment variables are read once, when the process
   starts, and an overlay declared `reload = Reload.WATCH` is rejected (below).
+- A `Watched<Keystore>` reloads with the password variable's value read at boot, because a running
+  process's environment does not change. Rotating a keystore's password therefore needs a rollout
+  (which also delivers the new keystore). A changed keystore that does not open with the boot
+  password is rejected as `keystore_unreadable`, and the previous one stays current.
+- The contract-first mode reloads a file input declared `reload: watch` the same way
+  ([docs/ADVANCED.md](docs/ADVANCED.md)).
+
+#### Using a watched value
+
+A value copied once at startup never changes: an `SSLContext`, an HTTP client or a pool built from
+it keeps the old certificate until it expires. Either read `current()` at each use, or rebuild the
+object in an `onChange` hook. A hook gets the new value after it passes its checks and replaces the
+old one, never after a rejected change. Several hooks can be registered; one that throws is reported
+through `warn` by input name and exception type only, and the others still run. `onChange` returns
+an `AutoCloseable` that unregisters the hook.
+
+A TLS server whose key manager the hook updates, so each handshake serves the current pair:
+
+```kotlin
+/** Serves the current key pair: the hook swaps in a renewed one, and each handshake reads it. */
+class ReloadingKeyManager(tls: Watched<TlsKeyPair>) : X509ExtendedKeyManager() {
+    @Volatile private var current = keyManager(tls.current())
+    private val subscription = tls.onChange { current = keyManager(it) }
+
+    private fun keyManager(pair: TlsKeyPair) = pair.keyManagerFactory().keyManagers.single() as X509ExtendedKeyManager
+
+    override fun chooseEngineServerAlias(keyType: String?, issuers: Array<Principal>?, engine: SSLEngine?) =
+        current.chooseEngineServerAlias(keyType, issuers, engine)
+    override fun chooseServerAlias(keyType: String?, issuers: Array<Principal>?, socket: Socket?) =
+        current.chooseServerAlias(keyType, issuers, socket)
+    override fun getCertificateChain(alias: String?): Array<X509Certificate>? = current.getCertificateChain(alias)
+    override fun getPrivateKey(alias: String?) = current.getPrivateKey(alias)
+    override fun getServerAliases(keyType: String?, issuers: Array<Principal>?) = current.getServerAliases(keyType, issuers)
+    override fun getClientAliases(keyType: String?, issuers: Array<Principal>?) = null
+    override fun chooseClientAlias(keyType: Array<String>?, issuers: Array<Principal>?, socket: Socket?) = null
+
+    fun close() = subscription.close()
+}
+```
+
+```kotlin
+val ssl = SSLContext.getInstance("TLS").apply { init(arrayOf(keyManager), null, null) }
+```
+
+An HTTP client that the hook rebuilds when the CA bundle it trusts changes (a new client, so no
+pooled connection keeps the old trust):
+
+```kotlin
+/** Calls the partner API trusting the current CA bundle: the hook rebuilds the client. */
+class PartnerClient(ca: Watched<CaBundle>) {
+    private val client = AtomicReference(build(ca.current()))
+    private val subscription = ca.onChange { client.set(build(it)) }
+
+    private fun build(bundle: CaBundle): HttpClient = HttpClient.newBuilder()
+        .sslContext(SSLContext.getInstance("TLS").apply { init(null, bundle.trustManagerFactory().trustManagers, null) })
+        .build()
+
+    fun get(uri: URI): HttpResponse<String> =
+        client.get().send(HttpRequest.newBuilder(uri).build(), HttpResponse.BodyHandlers.ofString())
+
+    fun close() = subscription.close()
+}
+```
+
+Hooks run on the thread that found the change (a `current()` or `refresh()` caller, or the daemon
+thread), one check at a time; a `current()` on another thread meanwhile returns the value it has.
+
+#### Reload status
+
+`status` is a `ReloadStatus` for a health check or a metric: `generation` (1 after boot, plus one per
+accepted reload), `lastReload` (an `Instant`, null before the first reload) and `lastRejected` (a
+`RejectedReload` with `time`, `input` and the violation `codes`, never content; cleared when a later
+change is accepted). Times come from the options' `clock`.
+
+```kotlin
+fun reloadHealth(name: String, input: Watched<*>): Map<String, Any?> {
+    val status = input.status
+    return mapOf(
+        "$name.generation" to status.generation,
+        "$name.lastReload" to status.lastReload,
+        "$name.rejectedCodes" to status.lastRejected?.codes,
+    )
+}
+```
 
 ## Boot validation
 

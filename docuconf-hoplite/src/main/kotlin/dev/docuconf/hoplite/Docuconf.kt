@@ -23,6 +23,7 @@ import dev.docuconf.kotlin.core.CueWriter
 import dev.docuconf.kotlin.core.DeclarationChecks
 import dev.docuconf.kotlin.core.DeclarationException
 import dev.docuconf.kotlin.core.Durations
+import dev.docuconf.kotlin.core.FileSpec
 import dev.docuconf.kotlin.core.FileType
 import dev.docuconf.kotlin.core.Generator
 import dev.docuconf.kotlin.core.JsonSyntaxException
@@ -72,8 +73,8 @@ public class DocuconfOptions {
 
     /**
      * How often a [Watched] file input checks whether its file changed, at most: one second by
-     * default. It checks when the app reads it, never in the background. [Duration.ZERO] checks at
-     * every read.
+     * default. It checks when the app reads it, and, while an [Watched.onChange] hook is registered,
+     * on a daemon thread every interval (at least every 100 ms). [Duration.ZERO] checks at every read.
      */
     public var reloadInterval: Duration = Duration.ofSeconds(1)
 
@@ -360,15 +361,23 @@ public object Docuconf {
         classLoader: ClassLoader,
         options: DocuconfOptions,
     ): Watched<Any> {
-        val path = boot.resolve(f.spec)
-        val paths = if (f.spec.type == FileType.TLS) listOf("tls.crt", "tls.key", "ca.crt").map { path.resolve(it) } else listOf(path)
-        val reloader = Reloader(f.spec.name, paths, options.reloadInterval, options.warn) {
-            val loader = FileLoader(env, fileRoot, options.clock, classLoader, options.hopliteConfig)
+        // The environment as it was at boot, copied: a reload resolves the path and opens a keystore
+        // with the values read then, whatever happens to the map the options were given.
+        val bootEnv = env.toMap()
+        val reloader = Reloader(
+            f.spec.name, watchedPaths(boot.resolve(f.spec), f.spec), options.reloadInterval, options.warn, options.clock,
+            initial = initial,
+        ) {
+            val loader = FileLoader(bootEnv, fileRoot, options.clock, classLoader, options.hopliteConfig)
             loader.load(f)
             loader.loaded[f.spec.name] to loader.violations.toList()
         }
-        return Watched(initial, reloader)
+        return Watched(reloader)
     }
+
+    /** The files whose change reloads [spec]: a TLS directory's three files, else the file itself. */
+    internal fun watchedPaths(path: Path, spec: FileSpec): List<Path> =
+        if (spec.type == FileType.TLS) listOf("tls.crt", "tls.key", "ca.crt").map { path.resolve(it) } else listOf(path)
 
     internal fun redact(message: String, secrets: List<String>): String = secrets.fold(message) { m, s -> m.replace(s, "****") }
 

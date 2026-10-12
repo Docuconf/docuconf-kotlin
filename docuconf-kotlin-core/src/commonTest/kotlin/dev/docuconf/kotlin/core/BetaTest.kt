@@ -88,6 +88,19 @@ class KeySetTest {
     }
 
     @Test
+    fun anEmptyKeyIsNamedByItsOneBasedPosition() {
+        val loose = keys.copy(keyMinLength = null, maxKeys = 3)
+        for ((raw, message) in listOf("old," to "key 2 is empty", ",new" to "key 1 is empty", "a,,b" to "key 2 is empty")) {
+            val v = ValueChecks.check(loose, raw)
+            assertEquals(listOf(Codes.OUT_OF_RANGE to message), v.map { it.code to it.message }, raw)
+        }
+        val json = loose.copy(listEncoding = ListEncoding.JSON)
+        assertEquals(listOf("key 2 is empty"), ValueChecks.check(json, "[\"old\", \"\"]").map { it.message })
+        // The other key messages count from 1 too.
+        assertEquals(listOf("key 2 is 2 characters, below keyMinLength 4"), ValueChecks.check(keys, "aaaa,bb").map { it.message })
+    }
+
+    @Test
     fun reportsKeysWithoutPrintingThem() {
         val tooMany = ValueChecks.check(keys, "aaaa,bbbb,cccc")
         assertEquals(listOf(Codes.TOO_MANY_ITEMS), tooMany.map { it.code })
