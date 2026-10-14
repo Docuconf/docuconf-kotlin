@@ -3,8 +3,8 @@
 Three artifacts go to Maven Central through the [Central Portal](https://central.sonatype.com):
 `dev.docuconf:docuconf-kotlin-core` (Kotlin Multiplatform: the root module plus
 `docuconf-kotlin-core-jvm`), `dev.docuconf:docuconf-hoplite` and `dev.docuconf:docuconf-ktor`. The
-`dev.docuconf` Gradle plugin (`docuconf-gradle-plugin/`, an included build) goes to the Gradle Plugin
-Portal; its publishing (`com.gradle.plugin-publish` and a Portal key) is not set up yet. Publishing uses the
+`dev.docuconf` Gradle plugin (`docuconf-gradle-plugin/`, an included build) goes to the
+[Gradle Plugin Portal](https://plugins.gradle.org) with `com.gradle.plugin-publish`, in the same release job. Publishing uses the
 [vanniktech maven-publish plugin](https://vanniktech.github.io/gradle-maven-publish-plugin/central/),
 which uploads to the Central Portal and signs with an in-memory GPG key.
 
@@ -25,7 +25,7 @@ place; Central rejects POMs without `<licenses>`.
    ```
    gpg --quick-generate-key "docuconf releases <releases@docuconf.dev>" ed25519 sign 2y
    gpg --keyserver keys.openpgp.org --send-keys <KEY_ID>
-   gpg --export-secret-keys --armor <KEY_ID>      # the value of SIGNING_KEY
+   gpg --export-secret-keys --armor <KEY_ID>      # the value of MAVEN_GPG_PRIVATE_KEY
    ```
 
 4. **Add the secrets** to a GitHub environment named `maven-central` (Settings, Environments), ideally
@@ -35,15 +35,24 @@ place; Central rejects POMs without `<licenses>`.
    |---|---|
    | `MAVEN_CENTRAL_USERNAME` | Portal token username |
    | `MAVEN_CENTRAL_PASSWORD` | Portal token password |
-   | `SIGNING_KEY` | ASCII-armoured private key (`gpg --export-secret-keys --armor`) |
-   | `SIGNING_KEY_ID` | The last 8 hex digits of the key ID |
-   | `SIGNING_KEY_PASSWORD` | The key's passphrase |
+   | `MAVEN_GPG_PRIVATE_KEY` | ASCII-armoured private key (`gpg --export-secret-keys --armor`) |
+   | `MAVEN_GPG_PASSPHRASE` | The key's passphrase |
+
+   These are the names docuconf-java uses, so the token and key can be organization secrets shared by both
+   repositories; each still needs its own `maven-central` environment, which the workflow names. The key needs no
+   key ID: the in-memory key's primary key signs.
 
    The workflow passes them to Gradle as `ORG_GRADLE_PROJECT_mavenCentralUsername`,
-   `ORG_GRADLE_PROJECT_mavenCentralPassword`, `ORG_GRADLE_PROJECT_signingInMemoryKey`,
-   `ORG_GRADLE_PROJECT_signingInMemoryKeyId` and `ORG_GRADLE_PROJECT_signingInMemoryKeyPassword`.
+   `ORG_GRADLE_PROJECT_mavenCentralPassword`, `ORG_GRADLE_PROJECT_signingInMemoryKey` and
+   `ORG_GRADLE_PROJECT_signingInMemoryKeyPassword`.
    Signing is only enabled when `signingInMemoryKey` is set, so local `publishToMavenLocal` works
    without a key.
+
+5. **Gradle Plugin Portal.** Sign in at [plugins.gradle.org](https://plugins.gradle.org) with the account that
+   should own the `dev.docuconf` plugin, open *API Keys*, and add the key and secret as `GRADLE_PUBLISH_KEY` and
+   `GRADLE_PUBLISH_SECRET` to the `maven-central` environment. Without them the release skips the plugin with a
+   warning and publishes the libraries. The Portal reviews a new plugin by hand before its first version is listed,
+   and it may ask you to show you own `docuconf.dev`, the domain behind the `dev.docuconf` ID.
 
 ## Each release
 
