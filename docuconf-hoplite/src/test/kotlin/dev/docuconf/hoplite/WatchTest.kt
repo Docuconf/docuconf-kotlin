@@ -15,6 +15,7 @@ import java.time.Clock
 import java.time.Duration
 import java.time.Instant
 import java.time.ZoneOffset
+import java.time.temporal.ChronoUnit
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import kotlin.test.Test
@@ -320,7 +321,10 @@ class WatchTest {
     @Test
     fun statusCountsAcceptedReloadsAndKeepsTheLastRejection(@TempDir root: Path) {
         val s = Setup(root)
-        var now = Instant.parse("2026-10-10T10:00:00Z")
+        // The clock starts at the real time: the TLS input checks the fixture certificate's validity against it,
+        // and Certs.issue makes certificates valid from a day ago.
+        val start = Instant.now().truncatedTo(ChronoUnit.SECONDS)
+        var now = start
         val clock = object : Clock() {
             override fun getZone() = ZoneOffset.UTC
             override fun withZone(zone: java.time.ZoneId?) = this
@@ -329,22 +333,23 @@ class WatchTest {
         val config = s.load(clock = clock)
         assertEquals(ReloadStatus(generation = 1), config.settings.status)
 
-        now = Instant.parse("2026-10-10T11:00:00Z")
+        val accepted = start.plus(1, ChronoUnit.HOURS)
+        now = accepted
         s.settings.update(mapOf("settings.json" to """{"name": "two", "replicas": 2}"""))
         assertTrue(config.settings.refresh())
-        assertEquals(ReloadStatus(2, Instant.parse("2026-10-10T11:00:00Z"), null), config.settings.status)
+        assertEquals(ReloadStatus(2, accepted, null), config.settings.status)
 
-        now = Instant.parse("2026-10-10T12:00:00Z")
+        now = start.plus(2, ChronoUnit.HOURS)
         s.settings.update(mapOf("settings.json" to """{"name": "bad", "replicas": 0}"""))
         assertFalse(config.settings.refresh())
         assertEquals(
-            ReloadStatus(2, Instant.parse("2026-10-10T11:00:00Z"), RejectedReload(now, "settings", listOf(Codes.SCHEMA_MISMATCH))),
+            ReloadStatus(2, accepted, RejectedReload(now, "settings", listOf(Codes.SCHEMA_MISMATCH))),
             config.settings.status,
         )
         assertEquals(ReloadStatus(1), config.tls.status, "each input has its own status")
 
         // An accepted change clears the rejection.
-        now = Instant.parse("2026-10-10T13:00:00Z")
+        now = start.plus(3, ChronoUnit.HOURS)
         s.settings.update(mapOf("settings.json" to """{"name": "three", "replicas": 3}"""))
         assertTrue(config.settings.refresh())
         assertEquals(ReloadStatus(3, now, null), config.settings.status)
