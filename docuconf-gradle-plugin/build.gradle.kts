@@ -1,6 +1,6 @@
 plugins {
-    `java-gradle-plugin`
-    `maven-publish`
+    // Applies java-gradle-plugin and maven-publish, and adds publishPlugins for the Gradle Plugin Portal.
+    id("com.gradle.plugin-publish") version "2.2.1"
 }
 
 group = "dev.docuconf"
@@ -15,12 +15,15 @@ tasks.withType<JavaCompile>().configureEach {
 }
 
 gradlePlugin {
+    website = "https://docuconf.dev/languages/kotlin/"
+    vcsUrl = "https://github.com/docuconf/docuconf-kotlin"
     plugins {
         create("docuconf") {
             id = "dev.docuconf"
             implementationClass = "dev.docuconf.gradle.DocuconfPlugin"
             displayName = "docuconf"
             description = "Exports a service's docuconf contract (docuconfExport) and checks the committed one is current (docuconfCheck)."
+            tags = listOf("configuration", "kubernetes", "contract", "cue", "hoplite")
         }
     }
 }
