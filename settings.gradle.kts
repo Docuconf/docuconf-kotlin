@@ -25,3 +25,6 @@ include("docuconf-ktor")
 // The "orders" example service (examples/orders), built against the SDK in this repository.
 include("orders")
 project(":orders").projectDir = file("examples/orders")
+// The "shop" example (examples/shop): roles, requiredIf and an included fragment, contract-first.
+include("shop")
+project(":shop").projectDir = file("examples/shop")

@@ -148,6 +148,69 @@ jobs:
       - name: Smoke test
         run: examples/orders/smoke.sh
 
+  # The shop example (examples/shop): roles, requiredIf and the otel@1 fragment in contract-first mode,
+  # from the hand-written contract.json, built against the SDK in this repository.
+  shop-example:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Pick the docuconf-go ref
+        id: dcref
+        env:
+          EVENT: ${{ github.event_name }}
+          INPUT_REF: ${{ inputs.docuconf_go_ref }}
+        run: |
+          if [ "$EVENT" = schedule ]; then echo "ref=main" >> "$GITHUB_OUTPUT"
+          elif [ -n "$INPUT_REF" ]; then echo "ref=$INPUT_REF" >> "$GITHUB_OUTPUT"
+          else echo "ref=$(tr -d '[:space:]' < .github/docuconf-go.ref)" >> "$GITHUB_OUTPUT"; fi
+      - name: Check out docuconf-go
+        uses: actions/checkout@v4
+        with:
+          repository: docuconf/docuconf-go
+          path: docuconf-go
+          ref: ${{ steps.dcref.outputs.ref }}
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      # docuconf-go's cmd/docuconf, built below for the docs check, needs Go 1.25.
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache: false
+      - run: go install cuelang.org/go/cmd/cue@v0.17.1
+      - uses: gradle/actions/setup-gradle@v4
+      # The test matrix (ShopTest), then the app the smoke test runs.
+      - name: Test and build
+        run: ./gradlew :shop:test :shop:installDist --stacktrace
+      # contract.cue is contract.json in CUE, written by gen-contract-cue.sh.
+      - name: contract.cue matches contract.json
+        run: |
+          examples/shop/gen-contract-cue.sh
+          git diff --exit-code -- examples/shop/contract.cue
+      - name: cue vet the contract against the meta-schema
+        run: |
+          dir="$(mktemp -d)"
+          cp -r docuconf-go/spec/cue/cue.mod docuconf-go/spec/cue/contract "$dir/"
+          mkdir "$dir/shop"
+          cp examples/shop/contract.cue "$dir/shop/"
+          cd "$dir" && cue vet -c ./shop
+      - name: Install the docuconf CLI
+        working-directory: docuconf-go/cmd/docuconf
+        run: |
+          go install .
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+      # CONFIG.md, CONFIG.agents.md and docs.json are generated from contract.cue by the docuconf CLI of
+      # the pinned docuconf-go. These are the example README's commands, with --check.
+      - name: Generated docs are up to date
+        working-directory: examples/shop
+        run: |
+          docuconf docs contract.cue --check CONFIG.md
+          docuconf docs contract.cue --format agents --check CONFIG.agents.md
+          docuconf docs contract.cue --format model --check docs.json
+      - name: Smoke test
+        run: examples/shop/smoke.sh
+
   # A first-time user's project (examples/consumer): consumes docuconf from source as the README's
   # Install section says, and runs the README's steps (export, check, a bad start).
   consumer:
