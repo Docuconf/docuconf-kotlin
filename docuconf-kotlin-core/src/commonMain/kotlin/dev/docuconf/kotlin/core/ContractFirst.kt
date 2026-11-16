@@ -13,6 +13,14 @@ import kotlin.time.Duration.Companion.nanoseconds
  * at boot. Values are layered as SPEC §4.4 and §4.7 say: the variable's default, then the selected
  * profile's default, then a config-file overlay, then the environment.
  *
+ * A contract with `roles` (SPEC §4.9) is narrowed to the workload's role, `DOCUCONF_ROLE` ([role]):
+ * an input whose `roles` leave it out is optional, and with no valid role every role-specific input
+ * is. An input with `requiredIf` (SPEC §4.2.1) is required while its condition variable's loaded
+ * value (from any of the layers above) is the condition's value, and the input is in the role:
+ * `TLS_CLIENT_CA_SUBJECT: missing_required: is required when TLS_ENABLED is true`. A condition
+ * variable with a violation of its own makes nothing required. `includes` (SPEC §4.8) is read into
+ * [Contract.includes]; the fragments' variables are already inline in `vars`.
+ *
  * File inputs and overlays are files, which this multiplatform module does not read: pass [Inputs]
  * to read them. `docuconf-hoplite` does, with `Docuconf.checkContract` and `Docuconf.loadContract`,
  * which check every file input as boot validation does, and reload a file input declared
@@ -101,8 +109,11 @@ public object ContractFirst {
             is JsonValue.Obj -> readProfiles(p, errors)
             else -> null.also { errors += "contract: profiles must be an object" }
         }
+        val top = Fields(f, "contract:", errors)
+        val includes = top.strings("includes") ?: emptyList()
+        val roles = top.strings("roles")
         if (errors.isNotEmpty()) throw DeclarationException(errors)
-        val contract = Contract(service, generator, vars, files, metadata.str("appVersion"), overlays, profiles)
+        val contract = Contract(service, generator, vars, files, metadata.str("appVersion"), overlays, profiles, includes, roles)
         DeclarationChecks.require(contract)
         return contract
     }
@@ -123,7 +134,14 @@ public object ContractFirst {
         overlays.forEach { violations += it.second.violations }
         val profile = selectedProfile(contract, env)
 
-        for (spec in contract.vars.sortedBy { it.name }) {
+        // Roles (SPEC §4.9): an input only other roles use is optional here. With no role, or one the
+        // contract does not declare, every role-specific input is optional, so the role is the one
+        // problem reported.
+        val role = role(contract, env)
+        fun inRole(used: List<String>?) = used == null || (role != null && role in used)
+
+        for (declared in contract.vars.sortedBy { it.name }) {
+            val spec = if (declared.required && !inRole(declared.roles)) declared.copy(required = false) else declared
             val fromOverlay = if (spec.configKey == null || spec.name == contract.profiles?.selector) {
                 null
             } else {
@@ -166,10 +184,27 @@ public object ContractFirst {
             }
         }
 
+        // Conditional requirements (SPEC §4.2.1), on the condition variables' loaded values: the
+        // environment, an overlay, the selected profile or the default. A condition variable with a
+        // violation has no value, so it makes nothing required.
+        fun requiredWhen(condition: RequiredIf?, used: List<String>?): RequiredIf? =
+            condition?.takeIf { inRole(used) && it.holdsFor(values[it.variable]) }
+        val reported = violations.map { it.input }.toSet()
+        for (spec in contract.vars.sortedBy { it.name }) {
+            if (values[spec.name] != null || spec.name in reported) continue
+            requiredWhen(spec.requiredIf, spec.roles)?.let { violations += Violation(Codes.MISSING_REQUIRED, spec.name, "is required when $it") }
+        }
+
         if (inputs != null) {
-            for (file in contract.files.sortedBy { it.name }) {
+            for (declared in contract.files.sortedBy { it.name }) {
+                val required = requiredWhen(declared.requiredIf, declared.roles)
+                val file = declared.copy(required = inRole(declared.roles) && (declared.required || required != null))
                 val loaded = inputs.loadFile(file, env)
-                violations += loaded.violations
+                violations += if (required == null || loaded.value != null) {
+                    loaded.violations
+                } else {
+                    loaded.violations.map { if (it.code == Codes.FILE_MISSING) it.copy(message = "${it.message}, and is required when $required") else it }
+                }
                 values[file.name] = loaded.value
                 if (loaded.value != null) file.deprecated?.let { warnings += deprecationWarning("file ${file.name}", it) }
             }
@@ -203,6 +238,13 @@ public object ContractFirst {
      */
     public fun deprecationWarning(input: String, d: Deprecation): String =
         "$input is deprecated: ${d.message}" + (d.replacedBy?.let { " (replaced by $it)" } ?: "")
+
+    /**
+     * The workload's role (SPEC §4.9): [Contract.ROLE_VAR] from [env] when it is one of the contract's
+     * roles; null when the contract has none, or the variable is unset or names another role.
+     */
+    public fun role(contract: Contract, env: Map<String, String>): String? =
+        env[Contract.ROLE_VAR]?.takeIf { r -> contract.roles?.contains(r) == true }
 
     /**
      * The profile in effect (SPEC §4.4): the selector's value when the environment sets it, read as
@@ -339,6 +381,20 @@ public object ContractFirst {
 
         fun json(key: String): JsonValue? = f[key]?.takeIf { it != JsonValue.Null }
 
+        /** `requiredIf: {VAR: value}` (SPEC §4.2.1): one variable and a string, integer or boolean value. */
+        fun requiredIf(): RequiredIf? = when (val v = f["requiredIf"]) {
+            null, JsonValue.Null -> null
+            is JsonValue.Obj -> {
+                val (name, value) = v.fields.entries.singleOrNull()?.toPair() ?: return null.also { errors += "$p requiredIf must name one variable and its value: {VAR: value}" }
+                if (value is JsonValue.Str || value is JsonValue.Int || value is JsonValue.Bool) {
+                    RequiredIf(name, value)
+                } else {
+                    null.also { errors += "$p requiredIf must name one variable and a string, integer or boolean value" }
+                }
+            }
+            else -> null.also { errors += "$p requiredIf must name one variable and its value: {VAR: value}" }
+        }
+
         fun deprecated(): Deprecation? = when (val v = f["deprecated"]) {
             null, JsonValue.Null -> null
             is JsonValue.Obj -> Deprecation(v.fields.str("message") ?: "", v.fields.str("replacedBy"))
@@ -411,6 +467,8 @@ public object ContractFirst {
             keyMinLength = f.int("keyMinLength"),
             keyMaxLength = f.int("keyMaxLength"),
             schema = f.json("schema"),
+            requiredIf = f.requiredIf(),
+            roles = f.strings("roles"),
         )
     }
 
@@ -443,6 +501,8 @@ public object ContractFirst {
             pattern = f.str("pattern"),
             minLength = f.int("minLength"),
             maxLength = f.int("maxLength"),
+            requiredIf = f.requiredIf(),
+            roles = f.strings("roles"),
         )
     }
 

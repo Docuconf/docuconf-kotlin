@@ -54,8 +54,12 @@ tasks.test {
     System.getenv("DOCUCONF_REQUIRE_CONFORMANCE")?.let { environment("DOCUCONF_REQUIRE_CONFORMANCE", it) }
     System.getenv("DOCUCONF_CLI")?.takeIf { it.isNotEmpty() }?.let { environment("DOCUCONF_CLI", it) }
     // Re-run when the cases change (a missing file is allowed: the runner skips or fails itself).
-    inputs.files(cases ?: rootProject.file("../docuconf-go/conformance/cases.json"))
+    val casesFile = cases ?: rootProject.file("../docuconf-go/conformance/cases.json")
+    inputs.files(casesFile)
         .withPropertyName("conformanceCases").withPathSensitivity(PathSensitivity.NONE)
+    // The pending cases (features not every SDK supports yet), next to cases.json.
+    inputs.files(casesFile.resolveSibling("cases.pending.json"))
+        .withPropertyName("pendingConformanceCases").withPathSensitivity(PathSensitivity.NONE)
     testLogging { events("failed", "skipped") }
 }
 

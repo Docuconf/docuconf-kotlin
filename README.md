@@ -719,16 +719,18 @@ data class GatewayConfig(
 ## More
 
 [docs/ADVANCED.md](docs/ADVANCED.md): the contract-first mode (validate against a hand-written
-contract, with its files, profiles and overlays), the shared conformance suite, the plan for Android
-and iOS, and what v0.1 does not do.
+contract, with its files, profiles, overlays, conditional requirements (`requiredIf`), roles and
+included fragments), the shared conformance suite, the plan for Android and iOS, and what v0.1 does
+not do.
 
 ### Conformance
 
 CI runs docuconf-go's shared conformance suite (SPEC §12) through the contract-first mode, and the
 SDK supports every capability tag in it: `int64`, `json-schema`, `key-set`, `deprecated`,
-`strict-parsing`, `files`, `profiles` and `overlays`. **No case is skipped**, and the run fails if one
-ever is; a tag the runner does not know is skipped rather than run, so that failure is how a new tag
-gets noticed. CI also exports the shared export fixture and compares it with docuconf-go's golden
+`strict-parsing`, `files`, `profiles`, `overlays`, `required-if` and `roles`. **No case is skipped**,
+and the run fails if one ever is; a tag the runner does not know is skipped rather than run, so that
+failure is how a new tag gets noticed. CI also runs `cases.pending.json`, the cases of features not
+every SDK supports yet: a case with a supported tag must pass, and one with an unknown tag is skipped. CI also exports the shared export fixture and compares it with docuconf-go's golden
 contract, which must match with no difference ([docs/ADVANCED.md](docs/ADVANCED.md#conformance)).
 
 ## Development
