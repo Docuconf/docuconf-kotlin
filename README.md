@@ -17,6 +17,8 @@ Server-side Kotlin on the JVM (Ktor, http4k, plain `main`), JDK 17 or later. Sta
 
 The steps below are the [`examples/consumer`](examples/consumer/) project, which CI builds and runs
 exactly as written. [`examples/orders`](examples/orders/) is a small HTTP service built the same way.
+[`examples/shop`](examples/shop/) shows roles, `requiredIf` and an included fragment (`otel@1`) in the
+contract-first mode, from a hand-written contract.
 
 ## 1. Install
 
