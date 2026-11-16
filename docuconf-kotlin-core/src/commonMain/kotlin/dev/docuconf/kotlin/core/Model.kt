@@ -79,6 +79,25 @@ public enum class Reload(public val wire: String) {
  */
 public data class Deprecation(val message: String, val replacedBy: String? = null)
 
+/**
+ * `requiredIf: {VAR: value}` on a variable or file input (SPEC §4.2.1): the input is required while
+ * [variable] has [value], and optional otherwise. [variable] is another declared, non-secret `string`,
+ * `int`, `bool` or `enum` variable, and [value] a [JsonValue.Str], [JsonValue.Int] or [JsonValue.Bool]
+ * it can hold. The input itself is not required, has no default and is not deprecated.
+ */
+public data class RequiredIf(val variable: String, val value: JsonValue) {
+    /** Whether [loaded], the condition variable's typed value (`String`, `Long` or `Boolean`), is [value]. */
+    public fun holdsFor(loaded: Any?): Boolean = when (val v = value) {
+        is JsonValue.Bool -> loaded is Boolean && loaded == v.value
+        is JsonValue.Int -> loaded is Long && loaded == v.value
+        is JsonValue.Str -> loaded is String && loaded == v.value
+        else -> false
+    }
+
+    /** The condition as messages write it, the value as JSON: `LOG_FORMAT is "json"`. */
+    override fun toString(): String = "$variable is $value"
+}
+
 /** One environment variable in the contract (SPEC §4.2). Defaults are held as [JsonValue]s. */
 public data class VarSpec(
     val name: String,
@@ -127,6 +146,10 @@ public data class VarSpec(
     val schema: JsonValue? = null,
     /** Longer docs in CommonMark (SPEC §4.2): the KDoc after its first sentence, or `@Doc(details = ...)`. Never read at runtime. */
     val details: String? = null,
+    /** Required only while another variable has a value (SPEC §4.2.1). */
+    val requiredIf: RequiredIf? = null,
+    /** The roles that use it (SPEC §4.9); null when every role does. */
+    val roles: List<String>? = null,
 )
 
 /** One file input in the contract (SPEC §4.6). */
@@ -161,6 +184,10 @@ public data class FileSpec(
     val maxLength: Int? = null,
     /** Longer docs in CommonMark (SPEC §4.2): the KDoc after its first sentence, or `@Doc(details = ...)`. Never read at runtime. */
     val details: String? = null,
+    /** Required only while a variable has a value (SPEC §4.2.1). */
+    val requiredIf: RequiredIf? = null,
+    /** The roles that use it (SPEC §4.9); null when every role does. */
+    val roles: List<String>? = null,
 ) {
     /** TLS key pairs and keystores are always secret (SPEC §4.6). */
     val isSecret: Boolean get() = secret || type == FileType.TLS || type == FileType.KEYSTORE
@@ -197,7 +224,13 @@ public data class ProfilesSpec(
 /** `metadata.generator`. */
 public data class Generator(val language: String, val sdk: String, val version: String)
 
-/** A service's declaration: everything that goes into `contract.cue`. Vars, files and overlays are sorted by name on export. */
+/**
+ * A service's declaration: everything that goes into `contract.cue`. Vars, files and overlays are sorted by name on export.
+ *
+ * [includes] names the well-known fragments the contract includes (SPEC §4.8), `name@major`; their
+ * variables are inline in [vars]. [roles] lists the roles the image runs as (SPEC §4.9), null when it
+ * has none; a contract with roles declares [ROLE_VAR]. Only the contract-first mode reads them.
+ */
 public data class Contract(
     val service: String,
     val generator: Generator,
@@ -206,7 +239,14 @@ public data class Contract(
     val appVersion: String? = null,
     val overlays: List<OverlaySpec> = emptyList(),
     val profiles: ProfilesSpec? = null,
+    val includes: List<String> = emptyList(),
+    val roles: List<String>? = null,
 ) {
+    public companion object {
+        /** The variable that names a workload's role (SPEC §4.9). */
+        public const val ROLE_VAR: String = "DOCUCONF_ROLE"
+    }
+
     public fun variable(name: String): VarSpec? = vars.firstOrNull { it.name == name }
     public fun file(name: String): FileSpec? = files.firstOrNull { it.name == name }
     public fun overlay(name: String): OverlaySpec? = overlays.firstOrNull { it.name == name }

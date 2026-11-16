@@ -26,6 +26,22 @@ val timeout: kotlin.time.Duration? = values.duration("TIMEOUT")
 - Values are layered as SPEC §4.4 and §4.7 say: the variable's `default`, then the selected profile's
   default from `profiles.defaults` (the selector's value, else `profiles.default`), then a
   config-file overlay, then the environment.
+- Conditional requirements (SPEC §4.2.1): an input with `requiredIf: {VAR: value}` is required while
+  `VAR`'s loaded value (from any of those layers) is `value`. A missing variable is
+  `missing_required` with `is required when TLS_ENABLED is true` (the value as JSON, so
+  `LOG_FORMAT is "json"`), and a missing file `file_missing` with `, and is required when ...`
+  appended. A condition variable with a violation of its own makes nothing required.
+- Roles (SPEC §4.9): a contract with `roles` is narrowed to the workload's role,
+  `ContractFirst.role(contract, env)`: `DOCUCONF_ROLE` when it is one of the roles. An input whose
+  `roles` leave that role out is optional, and so is every role-specific input when the role is
+  missing or unknown, so the role is the one problem reported.
+- `includes` (SPEC §4.8) is read into `Contract.includes`; the fragments' variables are already
+  inline in `vars`, and are checked like any other.
+- `DeclarationChecks` applies the meta-schema's rules to these: a `requiredIf` names one other
+  declared, non-secret `string`, `int`, `bool` or `enum` variable and a value it can hold (a bool is
+  never an int), on an input that is not required, has no default and is not deprecated; roles are
+  DNS labels, at least one and none twice, an input's are among the contract's, and `DOCUCONF_ROLE`
+  is a required enum whose values are the roles; includes are `name@major`.
 - Typed accessors: `string`, `long`, `double`, `boolean`, `duration`, `stringList`, `longList`,
   `keySet`, `json`, `file`, or `values[name]`. Absent optional inputs are null. `toJson()` gives every
   value as JSON, as the conformance suite writes it.
@@ -76,8 +92,12 @@ checks below, or with `DOCUCONF_CONFORMANCE=../docuconf-go/conformance/cases.jso
 - **Capability tags: all supported, none skipped.** The runner keeps an allow-list of the tags this
   SDK supports: `int64` (Kotlin `Long` holds every 64-bit integer), `json-schema`
   (`JsonSchemaValidator` checks `json` values against their schema), `key-set`, `deprecated`,
-  `strict-parsing`, `files`, `profiles` and `overlays`. A case with any other tag, including one the
-  runner has never heard of, is skipped, never run, and a skipped case fails the run.
+  `strict-parsing`, `files`, `profiles`, `overlays`, `required-if` and `roles`. A case with any other
+  tag, including one the runner has never heard of, is skipped, never run, and a skipped case fails
+  the run.
+- **Pending cases.** The runner also runs `cases.pending.json`, next to `cases.json`: the cases of
+  features not every SDK supports yet. A case whose tags are all supported must pass; one with a tag
+  the runner does not know is skipped without failing. Without the file there is no pending run.
 
 `ConformanceExportTest` declares docuconf-go's shared export fixture (`conformance/export/fixture.yaml`)
 with this SDK's annotations, exports it, and runs
@@ -118,5 +138,7 @@ The contract format may need a build-time variant for this (SPEC §13, open ques
   mode applies a contract's `profiles`.
 - `indexed` and `json` list encodings for declared config classes (they are read as `csv`, with
   `@Separator` for another separator). The contract-first mode parses all three.
+- `requiredIf`, roles and well-known fragments for declared classes: only the contract-first mode
+  reads them.
 - `@ConfigAlias` names are not exported (a warning says so); use `@Env`.
 - Reading a `deprecated.replacedBy` variable's old name as a fallback.

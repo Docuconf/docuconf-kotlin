@@ -14,6 +14,8 @@ public object DeclarationChecks {
     private val inputName = Regex("^[a-z]([-a-z0-9]{0,40}[a-z0-9])?$")
     private val absPath = Regex("^/[A-Za-z0-9._/-]+$")
     private val featureFlag = Regex("^(FF|FEATURE|FEATURE_FLAG|ENABLE)_")
+    private val roleName = Regex("^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$")
+    private val fragmentName = Regex("^[a-z][a-z0-9-]*@[1-9][0-9]*$")
 
     /** Mount directories a file input may not hide (`#ReservedDirs` in the meta-schema). */
     public val reservedDirs: Set<String> = setOf(
@@ -136,6 +138,9 @@ public object DeclarationChecks {
             }
         }
         contract.profiles?.let { checkProfiles(contract, it, errors) }
+        checkIncludes(contract.includes, errors)
+        checkRoles(contract, errors)
+        checkConditions(contract, errors)
         if (contract.overlays.isNotEmpty()) {
             for (v in contract.vars) {
                 if (v.secret || v.configKey == null) continue
@@ -204,6 +209,84 @@ public object DeclarationChecks {
             }
         }
     }
+
+    /** `includes` (SPEC §4.8): fragment names, `name@major`, none listed twice. Their variables are inline in `vars`. */
+    private fun checkIncludes(includes: List<String>, errors: MutableList<String>) {
+        includes.forEachIndexed { i, name ->
+            if (!fragmentName.matches(name)) {
+                errors += "includes: \"$name\" is not a fragment name, name@major"
+            } else if (includes.indexOf(name) < i) {
+                errors += "includes: $name is listed twice"
+            }
+        }
+    }
+
+    /** A list of roles (SPEC §4.9): DNS labels, at least one, none listed twice. */
+    private fun checkRoleList(p: String, roles: List<String>, errors: MutableList<String>) {
+        if (roles.isEmpty()) errors += "$p roles must list at least one role"
+        roles.forEachIndexed { i, r ->
+            if (!roleName.matches(r)) {
+                errors += "$p role \"$r\" must be a DNS label ([a-z0-9-], at most 63 characters)"
+            } else if (roles.indexOf(r) < i) {
+                errors += "$p role $r is listed twice"
+            }
+        }
+    }
+
+    /**
+     * Roles (SPEC §4.9): the contract's and each input's are role lists, each input's are among the
+     * contract's, and a contract with roles declares [Contract.ROLE_VAR] as a required enum whose
+     * values are exactly the roles, used by every role.
+     */
+    private fun checkRoles(contract: Contract, errors: MutableList<String>) {
+        contract.roles?.let { checkRoleList("roles:", it, errors) }
+        val inputs = contract.vars.map { "${it.name}:" to it.roles } + contract.files.map { "file ${it.name}:" to it.roles }
+        for ((p, used) in inputs) {
+            if (used == null) continue
+            checkRoleList(p, used, errors)
+            val roles = contract.roles
+            if (roles == null) {
+                errors += "$p has roles, but the contract declares none"
+                continue
+            }
+            for (r in used.distinct()) if (r !in roles) errors += "$p role $r is not one of the contract's roles, ${roles.joinToString(", ")}"
+        }
+        val roles = contract.roles ?: return
+        val v = contract.variable(Contract.ROLE_VAR)
+        if (v == null || v.type != VarType.ENUM || !v.required || v.roles != null || v.values != roles) {
+            errors += "${Contract.ROLE_VAR}: a contract with roles declares it as a required enum whose values are the roles, ${roles.joinToString(", ")}, used by every role"
+        }
+    }
+
+    /**
+     * Each input's `requiredIf` (SPEC §4.2.1): the input is not required, has no default and is not
+     * deprecated; the condition names another declared variable, a non-secret `string`, `int`, `bool` or
+     * `enum` one, and a value that variable can hold (a bool is never an int).
+     */
+    private fun checkConditions(contract: Contract, errors: MutableList<String>) {
+        data class Input(val p: String, val name: String, val condition: RequiredIf?, val required: Boolean, val hasDefault: Boolean, val deprecated: Boolean)
+        val inputs = contract.vars.map { Input("${it.name}:", it.name, it.requiredIf, it.required, it.default != null, it.deprecated != null) } +
+            contract.files.map { Input("file ${it.name}:", it.name, it.requiredIf, it.required, false, it.deprecated != null) }
+        for (input in inputs) {
+            val c = input.condition ?: continue
+            val p = input.p
+            if (input.required || input.hasDefault) errors += "$p an input with requiredIf cannot be required or have a default"
+            if (input.deprecated) errors += "$p a conditionally required input cannot be deprecated, since the platform could not stop setting it"
+            val on = contract.variable(c.variable)
+            if (c.variable == input.name || on == null) {
+                errors += "$p requiredIf must name another declared variable, not ${c.variable}"
+                continue
+            }
+            if (on.secret || on.type !in conditionTypes) {
+                errors += "$p requiredIf names ${on.name}, which is not a plain string, int, bool or enum variable"
+                continue
+            }
+            checkDefault(on, c.value)?.let { errors += "$p requiredIf: $c is not a value ${on.name} can have: $it" }
+        }
+    }
+
+    /** The types a `requiredIf` condition variable can have: they compare as written (SPEC §4.2.1). */
+    private val conditionTypes = setOf(VarType.STRING, VarType.INT, VarType.BOOL, VarType.ENUM)
 
     /** How deep a `configKey` may nest in an overlay (`#MaxKeyDepth` in the meta-schema). */
     public const val MAX_KEY_DEPTH: Int = 8

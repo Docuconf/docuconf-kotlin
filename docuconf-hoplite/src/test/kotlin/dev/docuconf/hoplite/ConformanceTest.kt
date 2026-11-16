@@ -25,6 +25,10 @@ import kotlin.io.path.createDirectories
  *
  * Finds `cases.json` with `DOCUCONF_CONFORMANCE`, else `../docuconf-go/conformance/cases.json` next to
  * this repository. A missing file skips the suite, unless `DOCUCONF_REQUIRE_CONFORMANCE=1`.
+ *
+ * [pending] runs `cases.pending.json`, next to `cases.json`: the cases of features not every SDK
+ * supports yet. A case whose tags this SDK supports must pass; one with a tag it does not know is
+ * skipped without failing, and a missing file skips the whole run.
  */
 class ConformanceTest {
     /**
@@ -41,6 +45,8 @@ class ConformanceTest {
         "files", // File inputs, checked by the boot code (FileLoader).
         "profiles", // profiles.defaults, selected by the selector.
         "overlays", // Config-file overlays, layered between the profile and the environment.
+        "required-if", // requiredIf, on the condition variable's loaded value (ContractFirst.check).
+        "roles", // Roles: DOCUCONF_ROLE narrows the contract to the workload's inputs.
     )
 
     @TestFactory
@@ -52,17 +58,43 @@ class ConformanceTest {
             }
             return listOf(DynamicTest.dynamicTest("conformance suite") { assumeTrue(false, "conformance cases not found at $file; set DOCUCONF_CONFORMANCE") })
         }
+        val (cases, skipped) = suite(file, "conformance", "conformance-summary.txt")
+        val skippedTags = skippedTags(skipped)
+        return tests(cases) + DynamicTest.dynamicTest("every case runs (0 skipped)") {
+            if (skipped.isNotEmpty()) {
+                fail("the Kotlin SDK must run every case, but skipped ${skipped.size} (tags $skippedTags): ${skipped.joinToString { (it.fields["id"] as JsonValue.Str).value }}")
+            }
+        }
+    }
+
+    @TestFactory
+    fun pending(): List<DynamicTest> {
+        val file = File(casesFile().parentFile, "cases.pending.json")
+        if (!file.isFile) {
+            return listOf(DynamicTest.dynamicTest("pending conformance suite") { assumeTrue(false, "pending conformance cases not found at $file") })
+        }
+        return tests(suite(file, "pending conformance", "conformance-pending-summary.txt").first)
+    }
+
+    /** Reads a cases file; returns its cases and those that need a tag this SDK does not support. */
+    private fun suite(file: File, what: String, summaryFile: String): Pair<List<JsonValue.Obj>, List<JsonValue.Obj>> {
         val doc = JsonValue.parse(file.readText()) as JsonValue.Obj
-        require(doc.fields["version"] == JsonValue.Int(1)) { "unsupported cases.json version ${doc.fields["version"]}" }
+        require(doc.fields["version"] == JsonValue.Int(1)) { "unsupported ${file.name} version ${doc.fields["version"]}" }
         val cases = (doc.fields["cases"] as JsonValue.Arr).items.map { it as JsonValue.Obj }
         require(cases.isNotEmpty()) { "$file holds no cases" }
         val skipped = cases.filter { c -> requires(c).any { it !in supported } }
-        val skippedTags = skipped.flatMap { c -> requires(c).filter { it !in supported } }.groupingBy { it }.eachCount()
-        val summary = "conformance: ${cases.size} cases from $file, ${cases.size - skipped.size} run, ${skipped.size} skipped $skippedTags"
+        val summary = "$what: ${cases.size} cases from $file, ${cases.size - skipped.size} run, ${skipped.size} skipped ${skippedTags(skipped)}"
         println(summary)
         // scripts/conformance.sh prints it, since Gradle hides test output.
-        System.getProperty("docuconf.projectDir")?.let { File(it, "build/conformance-summary.txt").apply { parentFile.mkdirs() }.writeText(summary + "\n") }
-        return cases.map { c ->
+        System.getProperty("docuconf.projectDir")?.let { File(it, "build/$summaryFile").apply { parentFile.mkdirs() }.writeText(summary + "\n") }
+        return cases to skipped
+    }
+
+    private fun skippedTags(skipped: List<JsonValue.Obj>) = skipped.flatMap { c -> requires(c).filter { it !in supported } }.groupingBy { it }.eachCount()
+
+    /** One test per case, named by its `id`; a case that needs an unsupported tag is skipped. */
+    private fun tests(cases: List<JsonValue.Obj>): List<DynamicTest> =
+        cases.map { c ->
             val id = (c.fields["id"] as JsonValue.Str).value
             DynamicTest.dynamicTest(id) {
                 val missing = requires(c).filter { it !in supported }
@@ -70,12 +102,7 @@ class ConformanceTest {
                 val problems = run(c)
                 if (problems.isNotEmpty()) fail("conformance case \"$id\" (${(c.fields["source"] as? JsonValue.Str)?.value}):\n" + problems.joinToString("\n") { "  - $it" })
             }
-        } + DynamicTest.dynamicTest("every case runs (0 skipped)") {
-            if (skipped.isNotEmpty()) {
-                fail("the Kotlin SDK must run every case, but skipped ${skipped.size} (tags $skippedTags): ${skipped.joinToString { (it.fields["id"] as JsonValue.Str).value }}")
-            }
         }
-    }
 
     private fun casesFile(): File {
         System.getenv("DOCUCONF_CONFORMANCE")?.takeIf { it.isNotEmpty() }?.let { return File(it) }

@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # Runs only the docuconf-go-facing tests against a given docuconf-go checkout: the shared conformance
 # suite (docuconf-hoplite's ConformanceTest, every case through the contract-first mode, failing if
-# any case is skipped), the shared export fixture compared with conformance/export/golden.cue by
-# `docuconf conformance export` (ConformanceExportTest), and the tests that `cue vet` exported
-# contracts against its meta-schema (ExportTest and OverlayTest). Not the full suite.
+# any case is skipped, and the pending cases of cases.pending.json), the shared export fixture
+# compared with conformance/export/golden.cue by `docuconf conformance export`
+# (ConformanceExportTest), and the tests that `cue vet` exported contracts against its meta-schema
+# (ExportTest and OverlayTest). Not the full suite.
 #
 #   DOCUCONF_GO_DIR=/path/to/docuconf-go scripts/conformance.sh
 #
@@ -35,6 +36,7 @@ if [ -z "${DOCUCONF_CLI:-}" ]; then
 fi
 export DOCUCONF_CLI
 
+rm -f docuconf-hoplite/build/conformance-pending-summary.txt
 # --rerun: the conformance cases and the meta-schema live outside the build, so
 # never trust an up-to-date test task.
 ./gradlew --no-daemon --stacktrace \
@@ -43,3 +45,6 @@ export DOCUCONF_CLI
   --tests 'dev.docuconf.hoplite.ExportTest' --tests 'dev.docuconf.hoplite.OverlayTest'
 # The runner writes its count; it has already failed the build if any case was skipped.
 cat docuconf-hoplite/build/conformance-summary.txt
+# cases.pending.json, next to cases.json: a case with a tag this SDK supports must pass, and one with
+# a tag it does not know is skipped. A docuconf-go without the file has no pending run.
+if [ -f docuconf-hoplite/build/conformance-pending-summary.txt ]; then cat docuconf-hoplite/build/conformance-pending-summary.txt; fi
