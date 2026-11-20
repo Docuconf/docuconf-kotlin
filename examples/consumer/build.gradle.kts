@@ -5,7 +5,7 @@ plugins {
 }
 
 dependencies {
-    implementation("dev.docuconf:docuconf-hoplite:0.1.0-SNAPSHOT") // x-release-please-version
+    implementation("dev.docuconf:docuconf-hoplite:0.2.0") // x-release-please-version
     testImplementation(kotlin("test"))
 }
 
